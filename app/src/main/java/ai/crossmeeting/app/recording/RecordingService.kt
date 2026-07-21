@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import ai.crossmeeting.app.BuildConfig
 import ai.crossmeeting.app.MainActivity
 import ai.crossmeeting.app.SupabaseClientProvider
 import androidx.core.app.NotificationCompat
@@ -27,6 +28,8 @@ import androidx.core.content.getSystemService
 import io.github.jan.supabase.functions.functions
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import okhttp3.ConnectionSpec
+import okhttp3.TlsVersion
 import java.util.concurrent.TimeUnit
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
@@ -127,9 +130,17 @@ class RecordingService : Service() {
                 val tokenBody = LenientJson.decodeFromString<DeepgramTokenResponse>(tokenResponse.bodyAsText())
                 val token = tokenBody.token ?: error(tokenBody.error ?: "Token do Deepgram não recebido")
 
+                val tlsSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                    .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
+                    .build()
                 val client = HttpClient(OkHttp) {
                     install(WebSockets) { pingInterval = 20_000 }
-                    engine { config { readTimeout(0, TimeUnit.MILLISECONDS) } }
+                    engine {
+                        config {
+                            readTimeout(0, TimeUnit.MILLISECONDS)
+                            connectionSpecs(listOf(tlsSpec, ConnectionSpec.CLEARTEXT))
+                        }
+                    }
                 }
                 wsClient = client
 

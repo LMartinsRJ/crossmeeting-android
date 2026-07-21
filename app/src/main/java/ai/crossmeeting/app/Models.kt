@@ -65,6 +65,24 @@ data class MeetingIdRow(val id: Long)
 @Serializable
 data class MeetingSpaceUpdate(@kotlinx.serialization.SerialName("space_id") val spaceId: Long?)
 
+@Serializable
+data class CalendarAttendee(
+    val name: String = "",
+    val email: String = "",
+)
+
+/** Espelha a tabela `calendar_events` — sincronizada pelo desktop/web via Google/Microsoft. */
+@Serializable
+data class CalendarEventRow(
+    val id: String,
+    val title: String,
+    @kotlinx.serialization.SerialName("start_at") val startTime: String,
+    @kotlinx.serialization.SerialName("end_at") val endTime: String,
+    @kotlinx.serialization.SerialName("meeting_link") val meetingLink: String? = null,
+    val provider: String = "google",
+    val attendees: List<CalendarAttendee>? = null,
+)
+
 /** Payload de insert para uma reunião gravada no app — mesmas colunas que o desktop grava. */
 @Serializable
 data class NewMeeting(

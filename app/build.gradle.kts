@@ -81,5 +81,6 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.1.0")
     implementation("androidx.glance:glance:1.1.0")
 
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
