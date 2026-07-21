@@ -288,7 +288,7 @@ class RecordingService : Service() {
 
     private fun handleDeepgramMessage(text: String) {
         runCatching { LenientJson.decodeFromString<DeepgramMessage>(text) }
-            .onFailure { Log.e(TAG, "decode Deepgram: $text", it) }
+            .onFailure { if (BuildConfig.DEBUG) Log.e(TAG, "decode Deepgram: $text", it) else Log.e(TAG, "decode Deepgram failed", it) }
             .onSuccess { msg ->
                 val transcript = msg.channel?.alternatives?.firstOrNull()?.transcript.orEmpty()
                 if (transcript.isBlank()) return
