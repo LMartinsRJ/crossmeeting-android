@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mesma paleta de ui/theme/Color.kt (Compose) — duplicada aqui porque temas/splash
+         screen em XML (fora do Compose) não conseguem referenciar Color.kt diretamente. -->
+    <color name="cm_surface">#15151A</color>
+    <color name="cm_surface2">#1C1C22</color>
+    <color name="cm_wave">#6C8EFF</color>
+    <color name="cm_blue">#3952D4</color>
+</resources>

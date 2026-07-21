@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <!-- Gradiente radial sutil em vez de preto chapado, pra dar um pouco de profundidade
+         ao ícone — centro um tom mais claro (cm-surface2), bordas no cm-surface escuro. -->
+    <gradient
+        android:type="radial"
+        android:gradientRadius="76"
+        android:centerX="54"
+        android:centerY="40"
+        android:startColor="#1C1C22"
+        android:endColor="#15151A" />
+</shape>

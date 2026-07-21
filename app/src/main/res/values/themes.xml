@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- windowBackground escuro pra não dar flash branco entre a splash screen e o
+         Compose desenhar o primeiro frame (MaterialTheme.colorScheme.background já é
+         escuro, mas o fundo da Window do Android é branco por padrão até isso acontecer). -->
+    <style name="Theme.Crossmeeting" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/cm_surface</item>
+    </style>
+
+    <!-- Tema usado só durante o cold start (androidx.core.splashscreen) — fundo com o
+         gradiente do ícone e as mesmas barras do logo, depois troca pro Theme.Crossmeeting
+         normal via postSplashScreenTheme assim que installSplashScreen() detecta que a
+         Activity terminou de carregar. -->
+    <style name="Theme.Crossmeeting.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/cm_surface</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.Crossmeeting</item>
+    </style>
+</resources>

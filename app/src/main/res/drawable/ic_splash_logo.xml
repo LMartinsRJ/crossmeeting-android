@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Mesmas barras do ic_launcher_foreground, sem depender da máscara adaptativa —
+         usado como ícone da splash screen (Theme.Crossmeeting.Starting). -->
+    <path
+        android:strokeColor="#6C8EFF"
+        android:strokeWidth="7.8"
+        android:strokeLineCap="round"
+        android:pathData="M34.5,57.9 L34.5,76.1" />
+    <path
+        android:strokeColor="#6C8EFF"
+        android:strokeWidth="7.8"
+        android:strokeLineCap="round"
+        android:pathData="M44.9,42.3 L44.9,76.1" />
+    <path
+        android:strokeColor="#6C8EFF"
+        android:strokeWidth="7.8"
+        android:strokeLineCap="round"
+        android:pathData="M55.3,31.9 L55.3,76.1" />
+    <path
+        android:strokeColor="#6C8EFF"
+        android:strokeWidth="7.8"
+        android:strokeLineCap="round"
+        android:pathData="M65.7,47.5 L65.7,76.1" />
+    <path
+        android:strokeColor="#6C8EFF"
+        android:strokeAlpha="0.6"
+        android:strokeWidth="5.2"
+        android:strokeLineCap="round"
+        android:pathData="M74.8,61.8 L74.8,77.4" />
+</vector>
