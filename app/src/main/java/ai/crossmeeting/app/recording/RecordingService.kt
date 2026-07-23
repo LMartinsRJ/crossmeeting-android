@@ -370,18 +370,31 @@ class RecordingService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Gravação", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(CHANNEL_ID, "Gravação", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Mostra quando o Crossmeeting está gravando uma reunião"
+                    setShowBadge(true)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                },
             )
         }
+        val openIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
+        )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Gravação em andamento")
+            .setContentTitle("🎙 Crossmeeting gravando")
             .setContentText(
                 if (hasPlayback) "Capturando microfone + áudio da reunião"
-                else "Crossmeeting está transcrevendo sua reunião"
+                else "Transcrevendo sua reunião ao vivo"
             )
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .setContentIntent(openIntent)
             .setOngoing(true)
+            .setUsesChronometer(true)           // cronômetro ao vivo na notificação
+            .setChronometerCountDown(false)
+            .setWhen(System.currentTimeMillis())
+            .setShowWhen(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // aparece na tela de bloqueio
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
         val type = if (hasPlayback && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)

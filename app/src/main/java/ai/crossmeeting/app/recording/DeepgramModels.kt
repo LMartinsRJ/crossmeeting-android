@@ -34,13 +34,16 @@ data class DeepgramMessage(
 )
 
 @Serializable
-data class EnhanceTranscriptRequest(val transcript: String)
+data class EnhanceTranscriptRequest(
+    val transcript: String,
+    @kotlinx.serialization.SerialName("meetingId") val meetingId: Long? = null,
+)
 
 @Serializable
-data class ActionItem(val text: String, val owner: String? = null, val due: String? = null)
+data class ActionItem(val text: String = "", val owner: String? = null, val due: String? = null)
 
 @Serializable
-data class Decision(val text: String, val status: String? = null)
+data class Decision(val text: String = "", val status: String? = null)
 
 @Serializable
 data class Enhancement(

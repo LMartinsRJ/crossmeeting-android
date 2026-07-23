@@ -32,11 +32,10 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import kotlin.random.Random
 
 /**
@@ -82,43 +81,52 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
                 // O Deepgram só marca um trecho como "final" depois de uma pausa na fala —
                 // se o usuário parar no meio de uma frase, o que sobrou fica só em interimText.
                 val transcript = (snapshot.finalTranscript + " " + snapshot.interimText).trim()
-                var enhancementJson: String? = null
-
-                if (transcript.isNotBlank()) {
-                    runCatching {
-                        val response = SupabaseClientProvider.client.functions.invoke("enhance-transcript") {
-                            contentType(ContentType.Application.Json)
-                            setBody(EnhanceTranscriptRequest(transcript))
-                        }
-                        val bodyText = response.bodyAsText()
-                        val parsed = LenientJson.decodeFromString<EnhanceTranscriptResponse>(bodyText)
-                        parsed.enhancement?.let { enhancementJson = Json.encodeToString(it) }
-                            ?: android.util.Log.w("CMSave", "enhance-transcript sem enhancement: $bodyText")
-                    }.onFailure {
-                        android.util.Log.e("CMSave", "falha ao chamar/decodificar enhance-transcript", it)
-                    }
-                }
-
+                val wordCount = transcript.split(Regex("\\s+")).count { it.isNotBlank() }
                 val userId = SupabaseClientProvider.client.postgrest.from("profiles")
                     .select().decodeSingle<ProfileRow>().id
-                val wordCount = transcript.split(Regex("\\s+")).count { it.isNotBlank() }
-                val finalTitle = title.trim().ifBlank {
+                val fallbackTitle = title.trim().ifBlank {
                     "Reunião " + java.text.SimpleDateFormat("dd/MM HH:mm").format(java.util.Date())
                 }
 
-                SupabaseClientProvider.client.postgrest.from("meetings").insert(
+                // Salva a reunião imediatamente com título provisório, sem esperar a IA.
+                // O enhance-transcript roda em background depois da navegação para garantir
+                // que a reunião seja sempre gravada mesmo se a IA demorar ou falhar.
+                val meetingId = SupabaseClientProvider.client.postgrest.from("meetings").insert(
                     NewMeeting(
-                        title = finalTitle,
+                        title = fallbackTitle,
                         userId = userId,
                         createdAt = java.time.Instant.now().toString(),
-                        durationSeconds = RecordingState.state.value.elapsedSeconds,
+                        durationSeconds = snapshot.elapsedSeconds,
                         wordCount = wordCount,
                         transcript = transcript,
-                        enhancement = enhancementJson,
+                        enhancement = null,
                     ),
                 ) {
                     select(Columns.list("id"))
                 }.decodeSingle<MeetingIdRow>().id
+
+                // Dispara o enhance em background — fora do scope da composição para não ser
+                // cancelado quando o RecordingScreen for removido da pilha de navegação.
+                // A edge function recebe o meetingId e ela mesma faz o UPDATE via adminDb
+                // (SERVICE_ROLE_KEY, sem RLS), eliminando qualquer complexidade de sessão
+                // ou timeout no cliente Android.
+                if (transcript.isNotBlank()) {
+                    @Suppress("OPT_IN_USAGE")
+                    GlobalScope.launch {
+                        runCatching {
+                            val response = SupabaseClientProvider.client.functions.invoke("enhance-transcript") {
+                                contentType(ContentType.Application.Json)
+                                setBody(EnhanceTranscriptRequest(transcript = transcript, meetingId = meetingId))
+                            }
+                            val bodyText = response.bodyAsText()
+                            android.util.Log.d("CMSave", "enhance ok para meetingId=$meetingId body=${bodyText.take(200)}")
+                        }.onFailure { ex ->
+                            android.util.Log.e("CMSave", "enhance falhou para meetingId=$meetingId: ${ex::class.simpleName} ${ex.message}", ex)
+                        }
+                    }
+                }
+
+                meetingId
             }
             saving = false
             result.onSuccess { meetingId ->

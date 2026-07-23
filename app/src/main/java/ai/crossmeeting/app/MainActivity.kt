@@ -19,6 +19,7 @@ import ai.crossmeeting.app.auth.LoginScreen
 import ai.crossmeeting.app.chat.ChatScreen
 import ai.crossmeeting.app.home.*
 import ai.crossmeeting.app.recording.RecordingScreen
+import ai.crossmeeting.app.recording.RecordingState
 import ai.crossmeeting.app.ui.theme.CrossmeetingTheme
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
@@ -46,6 +47,12 @@ class MainActivity : ComponentActivity() {
                     val scope = rememberCoroutineScope()
 
                     var recording by remember { mutableStateOf(false) }
+                    val recordingState by RecordingState.state.collectAsState()
+                    // Se o serviço de gravação iniciou em background (via "Entrar e gravar"),
+                    // exibe a RecordingScreen automaticamente ao retornar ao app
+                    LaunchedEffect(recordingState.isRecording) {
+                        if (recordingState.isRecording) recording = true
+                    }
                     var chatting by remember { mutableStateOf(false) }
                     var openMeetingId by remember { mutableStateOf<Long?>(null) }
                     var openSpaceId by remember { mutableStateOf<Long?>(null) }

@@ -83,6 +83,13 @@ data class CalendarEventRow(
     val attendees: List<CalendarAttendee>? = null,
 )
 
+/** Payload de update do enhance-transcript — aplicado após o insert inicial da reunião. */
+@Serializable
+data class MeetingEnhancementUpdate(
+    val enhancement: String?,
+    val title: String,
+)
+
 /** Payload de insert para uma reunião gravada no app — mesmas colunas que o desktop grava. */
 @Serializable
 data class NewMeeting(
