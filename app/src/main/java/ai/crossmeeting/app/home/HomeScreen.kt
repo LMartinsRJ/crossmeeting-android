@@ -44,7 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
+
 import java.time.ZonedDateTime
 import java.time.format.TextStyle
 import java.util.Locale
@@ -52,16 +52,16 @@ import java.util.Locale
 internal val PT_BR = Locale("pt", "BR")
 
 internal fun monthAbbrev(iso: String): String = runCatching {
-    Instant.parse(iso).atZone(ZoneId.systemDefault()).month
+    Instant.parse(iso).atZone(deviceZone()).month
         .getDisplayName(TextStyle.SHORT, PT_BR).uppercase().trimEnd('.')
 }.getOrDefault("—")
 
 internal fun dayOfMonth(iso: String): String = runCatching {
-    Instant.parse(iso).atZone(ZoneId.systemDefault()).dayOfMonth.toString()
+    Instant.parse(iso).atZone(deviceZone()).dayOfMonth.toString()
 }.getOrDefault("?")
 
 internal fun timeOfDay(iso: String): String = runCatching {
-    val date = Instant.parse(iso).atZone(ZoneId.systemDefault())
+    val date = Instant.parse(iso).atZone(deviceZone())
     "%02d:%02d".format(date.hour, date.minute)
 }.getOrDefault("")
 
@@ -98,7 +98,7 @@ private fun userName(): String {
 }
 
 private fun isMeetingToday(createdAt: String): Boolean = runCatching {
-    Instant.parse(createdAt).atZone(ZoneId.systemDefault()).toLocalDate() == LocalDate.now()
+    Instant.parse(createdAt).atZone(deviceZone()).toLocalDate() == LocalDate.now()
 }.getOrDefault(false)
 
 private fun isDueTodayOrBefore(dueDate: String?): Boolean {
@@ -197,13 +197,13 @@ fun HomeScreen(
                     .sortedByDescending { it.createdAt }
                 actions = pg.from("action_items").select().decodeList<ActionItemRow>()
                 val nowZdt     = ZonedDateTime.now()
-                val endOfToday = LocalDate.now().plusDays(1).atStartOfDay(ZoneId.systemDefault())
+                val endOfToday = LocalDate.now().plusDays(1).atStartOfDay(deviceZone())
                 calendarToday = pg.from("calendar_events").select()
                     .decodeList<CalendarEventRow>()
                     .filter { ev ->
                         runCatching {
-                            val start = java.time.Instant.parse(ev.startTime).atZone(ZoneId.systemDefault())
-                            val end   = java.time.Instant.parse(ev.endTime).atZone(ZoneId.systemDefault())
+                            val start = java.time.Instant.parse(ev.startTime).atZone(deviceZone())
+                            val end   = java.time.Instant.parse(ev.endTime).atZone(deviceZone())
                             !end.isBefore(nowZdt) && start.isBefore(endOfToday)
                         }.getOrDefault(false)
                     }
@@ -220,13 +220,13 @@ fun HomeScreen(
             runCatching {
                 val pg         = SupabaseClientProvider.client.postgrest
                 val nowZdt     = ZonedDateTime.now()
-                val endOfToday = LocalDate.now().plusDays(1).atStartOfDay(ZoneId.systemDefault())
+                val endOfToday = LocalDate.now().plusDays(1).atStartOfDay(deviceZone())
                 calendarToday = pg.from("calendar_events").select()
                     .decodeList<CalendarEventRow>()
                     .filter { ev ->
                         runCatching {
-                            val start = java.time.Instant.parse(ev.startTime).atZone(ZoneId.systemDefault())
-                            val end   = java.time.Instant.parse(ev.endTime).atZone(ZoneId.systemDefault())
+                            val start = java.time.Instant.parse(ev.startTime).atZone(deviceZone())
+                            val end   = java.time.Instant.parse(ev.endTime).atZone(deviceZone())
                             !end.isBefore(nowZdt) && start.isBefore(endOfToday)
                         }.getOrDefault(false)
                     }

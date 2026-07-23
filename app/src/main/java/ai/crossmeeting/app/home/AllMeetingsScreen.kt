@@ -31,7 +31,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private fun historyDate(iso: String): String = runCatching {
-    val ldt = Instant.parse(iso).atZone(ZoneId.systemDefault())
+    val ldt = Instant.parse(iso).atZone(deviceZone())
     val fmt = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale("pt", "BR"))
     ldt.format(fmt)
 }.getOrDefault("")

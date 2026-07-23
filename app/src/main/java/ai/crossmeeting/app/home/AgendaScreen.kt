@@ -44,15 +44,15 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 private fun calendarEventStart(ev: CalendarEventRow): ZonedDateTime? = runCatching {
-    Instant.parse(ev.startTime).atZone(ZoneId.systemDefault())
+    Instant.parse(ev.startTime).atZone(deviceZone())
 }.getOrNull()
 
 private fun calendarEventEnd(ev: CalendarEventRow): ZonedDateTime? = runCatching {
-    Instant.parse(ev.endTime).atZone(ZoneId.systemDefault())
+    Instant.parse(ev.endTime).atZone(deviceZone())
 }.getOrNull()
 
 private fun dayLabel(date: LocalDate): String {
-    val today = LocalDate.now()
+    val today = LocalDate.now(deviceZone())
     return when {
         date == today             -> "Hoje"
         date == today.plusDays(1) -> "Amanhã"
@@ -70,7 +70,7 @@ private fun dayLabel(date: LocalDate): String {
 private fun formatTime(zdt: ZonedDateTime): String = "%02d:%02d".format(zdt.hour, zdt.minute)
 
 private fun isMeetingToday(createdAt: String): Boolean = runCatching {
-    Instant.parse(createdAt).atZone(ZoneId.systemDefault()).toLocalDate() == LocalDate.now()
+    Instant.parse(createdAt).atZone(deviceZone()).toLocalDate() == LocalDate.now(deviceZone())
 }.getOrDefault(false)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,10 +150,11 @@ fun AgendaScreen(
             val until = now.plusDays(7)
             // Filtra por end_at >= agora (inclui reuniões em andamento) E start_at <= +7 dias
             val all = pg.from("calendar_events").select().decodeList<CalendarEventRow>()
+            val zone = deviceZone()
             events = all.filter { ev ->
                 runCatching {
-                    val start = Instant.parse(ev.startTime).atZone(ZoneId.systemDefault())
-                    val end   = Instant.parse(ev.endTime).atZone(ZoneId.systemDefault())
+                    val start = Instant.parse(ev.startTime).atZone(zone)
+                    val end   = Instant.parse(ev.endTime).atZone(zone)
                     !end.isBefore(now) && start.isBefore(until)
                 }.getOrDefault(false)
             }

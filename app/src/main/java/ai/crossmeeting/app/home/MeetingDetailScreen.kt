@@ -86,7 +86,7 @@ private fun formatDuration(seconds: Int): String {
 
 private fun formatDate(iso: String): String = runCatching {
     val inst = Instant.parse(iso)
-    val ldt = inst.atZone(ZoneId.systemDefault())
+    val ldt = inst.atZone(deviceZone())
     val fmt = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale("pt", "BR"))
     ldt.format(fmt)
 }.getOrDefault(iso)
