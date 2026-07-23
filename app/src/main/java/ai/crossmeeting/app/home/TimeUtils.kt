@@ -1,52 +1,48 @@
 package ai.crossmeeting.app.home
 
 import android.content.Context
+import android.telephony.TelephonyManager
 import java.time.ZoneId
 
-private const val PREFS_NAME = "cm_prefs"
-private const val KEY_TIMEZONE = "user_timezone"
-
-/** Persiste o fuso escolhido pelo usuário. Vazio = auto-detect. */
-fun saveUserTimezone(context: Context, zoneId: String) {
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .edit().putString(KEY_TIMEZONE, zoneId).apply()
-}
-
-fun loadUserTimezone(context: Context): String =
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .getString(KEY_TIMEZONE, "") ?: ""
-
 /**
- * Retorna o ZoneId a ser usado para exibição de horários.
- * Prioridade:
- *  1. Preferência salva pelo usuário no app
- *  2. Fuso do sistema via ICU (mais confiável que ZoneId.systemDefault())
- *  3. Fallback por locale: se o sistema estiver em UTC mas o locale for pt-BR,
- *     assume America/Sao_Paulo (caso comum de dispositivo com fuso mal configurado)
+ * Retorna o ZoneId para exibição de horários.
+ * Prioridade: Settings.System → ICU → SIM/rede → America/Sao_Paulo
  */
 internal fun deviceZone(context: Context? = null): ZoneId {
-    // 1. Preferência salva
+    // Settings.System — reflete exatamente o que o usuário configurou em Data e Hora
     if (context != null) {
-        val saved = loadUserTimezone(context)
-        if (saved.isNotBlank()) return runCatching { ZoneId.of(saved) }.getOrNull() ?: autoZone()
-    }
-    return autoZone()
-}
-
-private fun autoZone(): ZoneId {
-    val icuTz = runCatching { android.icu.util.TimeZone.getDefault() }.getOrNull()
-    val icuId = icuTz?.id ?: "UTC"
-    // rawOffset == 0 significa UTC/GMT — tenta inferir pelo locale
-    val isUtc = (icuTz?.rawOffset ?: 0) == 0
-    if (isUtc) {
-        val locale = java.util.Locale.getDefault()
-        // Qualquer locale de português (pt, pt-BR, pt-PT) cai em São Paulo
-        // como padrão mais seguro para usuário brasileiro
-        if (locale.language == "pt") {
-            android.util.Log.d("CMTimezone", "ICU=$icuId offset=0, locale=${locale}, usando America/Sao_Paulo")
-            return ZoneId.of("America/Sao_Paulo")
+        val settingsId = runCatching {
+            android.provider.Settings.System.getString(context.contentResolver, "time_zone")
+        }.getOrNull()
+        if (!settingsId.isNullOrBlank() && settingsId != "GMT" && settingsId != "UTC") {
+            runCatching { ZoneId.of(settingsId) }.getOrNull()?.let { return it }
         }
     }
-    android.util.Log.d("CMTimezone", "ICU=$icuId rawOffset=${icuTz?.rawOffset} locale=${java.util.Locale.getDefault()}")
-    return runCatching { ZoneId.of(icuId) }.getOrDefault(ZoneId.of("America/Sao_Paulo"))
+
+    // ICU — mais confiável que ZoneId.systemDefault()
+    val icuTz = runCatching { android.icu.util.TimeZone.getDefault() }.getOrNull()
+    val icuId = icuTz?.id ?: "UTC"
+    if (icuId != "UTC" && icuId != "GMT" && (icuTz?.rawOffset ?: 0) != 0) {
+        runCatching { ZoneId.of(icuId) }.getOrNull()?.let { return it }
+    }
+
+    // País via SIM/rede — sem permissão de localização
+    if (context != null) {
+        val countryZone = runCatching {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            val country = (tm?.networkCountryIso?.takeIf { it.isNotBlank() }
+                ?: tm?.simCountryIso?.takeIf { it.isNotBlank() })?.uppercase()
+            country?.let { countryToZone(it) }
+        }.getOrNull()
+        if (countryZone != null) return countryZone
+    }
+
+    return ZoneId.of("America/Sao_Paulo")
+}
+
+private fun countryToZone(iso2: String): ZoneId? {
+    val zones = android.icu.util.TimeZone.getAvailableIDs(iso2)
+    if (zones.isNullOrEmpty()) return null
+    val preferred = zones.firstOrNull { !it.startsWith("Etc/") } ?: zones.first()
+    return runCatching { ZoneId.of(preferred) }.getOrNull()
 }

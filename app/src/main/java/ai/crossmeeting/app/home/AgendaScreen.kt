@@ -43,16 +43,16 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
-private fun calendarEventStart(ev: CalendarEventRow): ZonedDateTime? = runCatching {
-    Instant.parse(ev.startTime).atZone(deviceZone())
+private fun calendarEventStart(ev: CalendarEventRow, zone: ZoneId): ZonedDateTime? = runCatching {
+    Instant.parse(ev.startTime).atZone(zone)
 }.getOrNull()
 
-private fun calendarEventEnd(ev: CalendarEventRow): ZonedDateTime? = runCatching {
-    Instant.parse(ev.endTime).atZone(deviceZone())
+private fun calendarEventEnd(ev: CalendarEventRow, zone: ZoneId): ZonedDateTime? = runCatching {
+    Instant.parse(ev.endTime).atZone(zone)
 }.getOrNull()
 
-private fun dayLabel(date: LocalDate): String {
-    val today = LocalDate.now(deviceZone())
+private fun dayLabel(date: LocalDate, zone: ZoneId): String {
+    val today = LocalDate.now(zone)
     return when {
         date == today             -> "Hoje"
         date == today.plusDays(1) -> "Amanhã"
@@ -69,8 +69,8 @@ private fun dayLabel(date: LocalDate): String {
 
 private fun formatTime(zdt: ZonedDateTime): String = "%02d:%02d".format(zdt.hour, zdt.minute)
 
-private fun isMeetingToday(createdAt: String): Boolean = runCatching {
-    Instant.parse(createdAt).atZone(deviceZone()).toLocalDate() == LocalDate.now(deviceZone())
+private fun isMeetingToday(createdAt: String, zone: ZoneId): Boolean = runCatching {
+    Instant.parse(createdAt).atZone(zone).toLocalDate() == LocalDate.now(zone)
 }.getOrDefault(false)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -127,16 +127,17 @@ fun AgendaScreen(
     var recordings by remember { mutableStateOf<List<MeetingRow>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val zone: ZoneId = remember { deviceZone(context) }
 
-    val groupedEvents: Map<LocalDate, List<CalendarEventRow>> = remember(events) {
-        val today = LocalDate.now()
+    val groupedEvents: Map<LocalDate, List<CalendarEventRow>> = remember(events, zone) {
+        val today = LocalDate.now(zone)
         events.groupBy { ev ->
-            calendarEventStart(ev)?.toLocalDate() ?: today
+            calendarEventStart(ev, zone)?.toLocalDate() ?: today
         }.toSortedMap()
     }
 
-    val todayRecordings = remember(recordings) {
-        recordings.filter { it.deletedAt == null && isMeetingToday(it.createdAt) }
+    val todayRecordings = remember(recordings, zone) {
+        recordings.filter { it.deletedAt == null && isMeetingToday(it.createdAt, zone) }
             .sortedByDescending { it.createdAt }
     }
 
@@ -146,11 +147,10 @@ fun AgendaScreen(
         runCatching { SupabaseClientProvider.client.functions.invoke("sync-calendar") }
         runCatching {
             val pg    = SupabaseClientProvider.client.postgrest
-            val now   = ZonedDateTime.now()
+            val now   = ZonedDateTime.now(zone)
             val until = now.plusDays(7)
             // Filtra por end_at >= agora (inclui reuniões em andamento) E start_at <= +7 dias
             val all = pg.from("calendar_events").select().decodeList<CalendarEventRow>()
-            val zone = deviceZone()
             events = all.filter { ev ->
                 runCatching {
                     val start = Instant.parse(ev.startTime).atZone(zone)
@@ -171,18 +171,10 @@ fun AgendaScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            "Agenda",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        )
-                        // diagnóstico temporário — remover após confirmar fuso correto
-                        Text(
-                            "fuso: ${deviceZone(context).id}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        "Agenda",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 actions = {
@@ -236,9 +228,9 @@ fun AgendaScreen(
                 groupedEvents.forEach { (date, dayEvents) ->
                     item(key = "header-$date") {
                         Text(
-                            dayLabel(date).uppercase(),
+                            dayLabel(date, zone).uppercase(),
                             style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
-                            color = if (date == LocalDate.now()) CmWave
+                            color = if (date == LocalDate.now(zone)) CmWave
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
                         )
@@ -246,6 +238,7 @@ fun AgendaScreen(
                     items(dayEvents, key = { "ev-${it.id}" }) { ev ->
                         CalendarEventCard(
                             event = ev,
+                            zone = zone,
                             onJoinAndRecord = { link -> openLinkAndRecord(link) },
                         )
                     }
@@ -261,10 +254,11 @@ fun AgendaScreen(
 @Composable
 private fun CalendarEventCard(
     event: CalendarEventRow,
+    zone: ZoneId = ZoneId.of("America/Sao_Paulo"),
     onJoinAndRecord: (String) -> Unit = {},
 ) {
-    val start = calendarEventStart(event)
-    val end = calendarEventEnd(event)
+    val start = calendarEventStart(event, zone)
+    val end = calendarEventEnd(event, zone)
     val context = LocalContext.current
     var showSheet by remember { mutableStateOf(false) }
 
