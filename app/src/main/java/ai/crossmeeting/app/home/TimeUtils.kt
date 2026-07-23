@@ -34,13 +34,19 @@ internal fun deviceZone(context: Context? = null): ZoneId {
 }
 
 private fun autoZone(): ZoneId {
-    val icuId = runCatching { android.icu.util.TimeZone.getDefault().id }.getOrDefault("UTC")
-    // Se o sistema está em UTC/GMT, tenta inferir pelo locale do dispositivo
-    if (icuId == "UTC" || icuId == "GMT" || icuId.startsWith("Etc/")) {
+    val icuTz = runCatching { android.icu.util.TimeZone.getDefault() }.getOrNull()
+    val icuId = icuTz?.id ?: "UTC"
+    // rawOffset == 0 significa UTC/GMT — tenta inferir pelo locale
+    val isUtc = (icuTz?.rawOffset ?: 0) == 0
+    if (isUtc) {
         val locale = java.util.Locale.getDefault()
-        if (locale.language == "pt" && locale.country == "BR") {
+        // Qualquer locale de português (pt, pt-BR, pt-PT) cai em São Paulo
+        // como padrão mais seguro para usuário brasileiro
+        if (locale.language == "pt") {
+            android.util.Log.d("CMTimezone", "ICU=$icuId offset=0, locale=${locale}, usando America/Sao_Paulo")
             return ZoneId.of("America/Sao_Paulo")
         }
     }
+    android.util.Log.d("CMTimezone", "ICU=$icuId rawOffset=${icuTz?.rawOffset} locale=${java.util.Locale.getDefault()}")
     return runCatching { ZoneId.of(icuId) }.getOrDefault(ZoneId.of("America/Sao_Paulo"))
 }

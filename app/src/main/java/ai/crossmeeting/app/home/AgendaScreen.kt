@@ -171,10 +171,18 @@ fun AgendaScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        "Agenda",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                    )
+                    Column {
+                        Text(
+                            "Agenda",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        )
+                        // diagnóstico temporário — remover após confirmar fuso correto
+                        Text(
+                            "fuso: ${deviceZone(context).id}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 actions = {
