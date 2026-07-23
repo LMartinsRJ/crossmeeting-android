@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -61,19 +62,21 @@ class MainActivity : ComponentActivity() {
                     var openSpaceId by remember { mutableStateOf<Long?>(null) }
                     var currentTab by remember { mutableStateOf(AppTab.HOME) }
 
-                    // Renova o JWT automaticamente ao voltar ao foreground.
-                    // O SDK Supabase não consegue rodar o timer de refresh em background
-                    // (Doze mode) — quando o usuário volta, o token pode estar expirado.
-                    // refreshCurrentSession() usa o refresh token (validade de 7 dias) para
-                    // obter um novo JWT, ou emite NotAuthenticated se o refresh também expirou.
+                    // Bloqueia o conteúdo enquanto o JWT está sendo renovado ao voltar ao foreground.
+                    // O SDK não consegue rodar o timer de refresh em background (Doze mode).
+                    // Ao retornar, isRefreshingSession=true enquanto refreshCurrentSession()
+                    // executa — as telas só renderizam após o novo token estar pronto.
+                    var isRefreshingSession by remember { mutableStateOf(false) }
                     val lifecycle = LocalLifecycleOwner.current.lifecycle
                     DisposableEffect(lifecycle) {
                         val observer = LifecycleEventObserver { _, event ->
                             if (event == Lifecycle.Event.ON_RESUME) {
                                 scope.launch {
+                                    isRefreshingSession = true
                                     runCatching {
                                         SupabaseClientProvider.client.auth.refreshCurrentSession()
                                     }
+                                    isRefreshingSession = false
                                 }
                             }
                         }
@@ -111,7 +114,13 @@ class MainActivity : ComponentActivity() {
                     }
 
                     when {
-                        sessionStatus !is SessionStatus.Authenticated -> LoginScreen()
+                        sessionStatus !is SessionStatus.Authenticated && !isRefreshingSession -> LoginScreen()
+
+                        // Aguarda o refresh do JWT antes de renderizar qualquer tela que faz requests.
+                        isRefreshingSession -> Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = androidx.compose.ui.Alignment.Center,
+                        ) { CircularProgressIndicator(color = ai.crossmeeting.app.ui.theme.CmWave) }
 
                         recording -> RecordingScreen(
                             onSaved = { meetingId ->
