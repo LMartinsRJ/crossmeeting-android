@@ -21,6 +21,9 @@ import ai.crossmeeting.app.home.*
 import ai.crossmeeting.app.recording.RecordingScreen
 import ai.crossmeeting.app.recording.RecordingState
 import ai.crossmeeting.app.ui.theme.CrossmeetingTheme
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.status.SessionStatus
@@ -57,6 +60,26 @@ class MainActivity : ComponentActivity() {
                     var openMeetingId by remember { mutableStateOf<Long?>(null) }
                     var openSpaceId by remember { mutableStateOf<Long?>(null) }
                     var currentTab by remember { mutableStateOf(AppTab.HOME) }
+
+                    // Renova o JWT automaticamente ao voltar ao foreground.
+                    // O SDK Supabase não consegue rodar o timer de refresh em background
+                    // (Doze mode) — quando o usuário volta, o token pode estar expirado.
+                    // refreshCurrentSession() usa o refresh token (validade de 7 dias) para
+                    // obter um novo JWT, ou emite NotAuthenticated se o refresh também expirou.
+                    val lifecycle = LocalLifecycleOwner.current.lifecycle
+                    DisposableEffect(lifecycle) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME) {
+                                scope.launch {
+                                    runCatching {
+                                        SupabaseClientProvider.client.auth.refreshCurrentSession()
+                                    }
+                                }
+                            }
+                        }
+                        lifecycle.addObserver(observer)
+                        onDispose { lifecycle.removeObserver(observer) }
+                    }
 
                     // Salva o provider refresh token uma única vez por sessão
                     var tokenSaved by remember { mutableStateOf(false) }
