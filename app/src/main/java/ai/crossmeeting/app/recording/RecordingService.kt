@@ -138,7 +138,7 @@ class RecordingService : Service() {
                     engine {
                         config {
                             readTimeout(0, TimeUnit.MILLISECONDS)
-                            connectionSpecs(listOf(tlsSpec, ConnectionSpec.CLEARTEXT))
+                            connectionSpecs(listOf(tlsSpec))
                         }
                     }
                 }

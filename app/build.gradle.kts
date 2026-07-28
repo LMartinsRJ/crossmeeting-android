@@ -71,9 +71,9 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:auth-kt")
     implementation("io.github.jan-tennert.supabase:postgrest-kt")
     implementation("io.github.jan-tennert.supabase:functions-kt")
-    implementation("io.ktor:ktor-client-android:3.0.0-rc-1")
-    implementation("io.ktor:ktor-client-okhttp:3.0.0-rc-1")
-    implementation("io.ktor:ktor-client-websockets:3.0.0-rc-1")
+    implementation("io.ktor:ktor-client-android:3.1.3")
+    implementation("io.ktor:ktor-client-okhttp:3.1.3")
+    implementation("io.ktor:ktor-client-websockets:3.1.3")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

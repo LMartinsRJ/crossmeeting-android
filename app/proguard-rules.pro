@@ -21,8 +21,13 @@
 -keep class okhttp3.** { *; }
 -keep interface okhttp3.** { *; }
 
-# ── Crossmeeting models (lidos via reflexão pelo serializer) ──────────────────
--keep class ai.crossmeeting.app.** { *; }
+# ── Crossmeeting — apenas o que o Android instancia por nome ──────────────────
+# Entrypoints do sistema (Activity, Service, Receiver) precisam de nome preservado.
+# O resto do código da aplicação é ofuscado normalmente pelo R8.
+-keep public class ai.crossmeeting.app.MainActivity
+-keep public class ai.crossmeeting.app.recording.RecordingService
+-keep public class ai.crossmeeting.app.widget.MeetingWidgetReceiver
+-keep public class ai.crossmeeting.app.SupabaseClientProvider
 
 # ── Coroutines ────────────────────────────────────────────────────────────────
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
