@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import ai.crossmeeting.app.BuildConfig
 import ai.crossmeeting.app.auth.LoginScreen
 import ai.crossmeeting.app.chat.ChatScreen
 import ai.crossmeeting.app.home.*
@@ -78,6 +79,8 @@ class MainActivity : ComponentActivity() {
                                     isRefreshingSession = true
                                     runCatching {
                                         SupabaseClientProvider.client.auth.refreshCurrentSession()
+                                    }.onFailure { e ->
+                                        if (BuildConfig.DEBUG) android.util.Log.w("CMAuth", "refresh falhou: ${e.message}")
                                     }
                                     isRefreshingSession = false
                                 }

@@ -119,7 +119,7 @@ class RecordingService : Service() {
             }
         } else false
 
-        Log.d(TAG, "hasPlayback=$hasPlayback")
+        if (BuildConfig.DEBUG) Log.d(TAG, "hasPlayback=$hasPlayback")
 
         startForegroundNotification(hasPlayback)
         acquireWakeLock()
@@ -162,7 +162,7 @@ class RecordingService : Service() {
                     header("Authorization", "Bearer $token")
                 }
                 wsSession = session
-                Log.d(TAG, "WebSocket conectado, hasPlayback=$hasPlayback")
+                if (BuildConfig.DEBUG) Log.d(TAG, "WebSocket conectado, hasPlayback=$hasPlayback")
 
                 startTimer()
 
@@ -182,7 +182,7 @@ class RecordingService : Service() {
                 for (frame in session.incoming) {
                     if (frame is Frame.Text) handleDeepgramMessage(frame.readText())
                 }
-                Log.d(TAG, "incoming loop encerrado")
+                if (BuildConfig.DEBUG) Log.d(TAG, "incoming loop encerrado")
 
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -225,7 +225,7 @@ class RecordingService : Service() {
 
         mic.startRecording()
         pb.startRecording()
-        Log.d(TAG, "AudioRecord mic+playback iniciados")
+        if (BuildConfig.DEBUG) Log.d(TAG, "AudioRecord mic+playback iniciados")
 
         val micBuf = ByteArray(BUFFER_SIZE)
         val pbBuf  = ByteArray(BUFFER_SIZE)
@@ -240,7 +240,7 @@ class RecordingService : Service() {
                     val mixed = mixPcm16(micBuf, pbBuf, len)
                     session.send(Frame.Binary(true, mixed))
                     AudioLevelState.set(pcm16Amplitude(mixed, len))
-                    if (++frames % 20 == 0) Log.d(TAG, "mixed frames=$frames")
+                    if (BuildConfig.DEBUG && ++frames % 20 == 0) Log.d(TAG, "mixed frames=$frames")
                 }
             }
             AudioLevelState.set(0f)
@@ -263,7 +263,7 @@ class RecordingService : Service() {
             if (read > 0) {
                 session.send(Frame.Binary(true, buffer.copyOf(read)))
                 AudioLevelState.set(pcm16Amplitude(buffer, read))
-                if (++frames % 20 == 0) Log.d(TAG, "mic-only frames=$frames")
+                if (BuildConfig.DEBUG && ++frames % 20 == 0) Log.d(TAG, "mic-only frames=$frames")
             }
         }
         AudioLevelState.set(0f)
@@ -334,7 +334,7 @@ class RecordingService : Service() {
 
         serviceScope.launch {
             val closeResult = runCatching { wsSession?.send(Frame.Text("""{"type":"CloseStream"}""")) }
-            Log.d(TAG, "CloseStream: ${closeResult.isSuccess}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "CloseStream: ${closeResult.isSuccess}")
             kotlinx.coroutines.delay(1200)
             audioJob?.cancel()
             runCatching { wsClient?.close() }
@@ -373,13 +373,19 @@ class RecordingService : Service() {
                 NotificationChannel(CHANNEL_ID, "Gravação", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Mostra quando o Crossmeeting está gravando uma reunião"
                     setShowBadge(true)
-                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
                 },
             )
         }
         val openIntent = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
+        val publicVersion: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Crossmeeting")
+            .setContentText("Gravação em andamento")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .build()
+
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("🎙 Crossmeeting gravando")
             .setContentText(
@@ -389,11 +395,12 @@ class RecordingService : Service() {
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(openIntent)
             .setOngoing(true)
-            .setUsesChronometer(true)           // cronômetro ao vivo na notificação
+            .setUsesChronometer(true)
             .setChronometerCountDown(false)
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // aparece na tela de bloqueio
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
