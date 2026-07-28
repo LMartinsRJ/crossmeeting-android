@@ -57,7 +57,7 @@ class RecordingService : Service() {
         const val EXTRA_PROJECTION_DATA        = "projection_data"
 
         private const val NOTIFICATION_ID = 1001
-        private const val CHANNEL_ID      = "recording"
+        private const val CHANNEL_ID      = "recording_v2"
         private const val SAMPLE_RATE     = 16000
         private const val BUFFER_SIZE     = 4096
         private const val TAG             = "CMRecording"
@@ -370,7 +370,7 @@ class RecordingService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Gravação", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                NotificationChannel(CHANNEL_ID, "Gravação", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Mostra quando o Crossmeeting está gravando uma reunião"
                     setShowBadge(true)
                     lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
