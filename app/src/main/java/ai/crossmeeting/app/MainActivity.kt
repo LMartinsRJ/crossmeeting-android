@@ -39,7 +39,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        SupabaseClientProvider.client.handleDeeplinks(intent)
+        val launchUri = intent.data
+        if (launchUri?.scheme == "crossmeeting" && launchUri.host == "login-callback") {
+            SupabaseClientProvider.client.handleDeeplinks(intent)
+        }
 
         setContent {
             CrossmeetingTheme {
@@ -205,6 +208,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        SupabaseClientProvider.client.handleDeeplinks(intent)
+        val uri = intent.data
+        if (uri?.scheme == "crossmeeting" && uri.host == "login-callback") {
+            SupabaseClientProvider.client.handleDeeplinks(intent)
+        }
     }
 }
