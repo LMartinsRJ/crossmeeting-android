@@ -137,6 +137,7 @@ fun HomeScreen(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
+    var currentLang by remember { mutableStateOf(ai.crossmeeting.app.LangPrefs.get(context)) }
     var meetingToMove by remember { mutableStateOf<MeetingRow?>(null) }
 
     val meetingsToday = remember(meetings) { meetings.filter { isMeetingToday(it.createdAt) } }
@@ -270,7 +271,21 @@ fun HomeScreen(
                         }
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                             DropdownMenuItem(
-                                text = { Text("Sair") },
+                                text = {
+                                    val nextLang = if (currentLang == "pt") "en" else "pt"
+                                    val label = if (currentLang == "pt") "🇺🇸 Switch to English" else "🇧🇷 Mudar para Português"
+                                    Text(label)
+                                },
+                                leadingIcon = { Icon(Icons.Filled.Language, contentDescription = null) },
+                                onClick = {
+                                    val next = if (currentLang == "pt") "en" else "pt"
+                                    currentLang = next
+                                    menuExpanded = false
+                                    ai.crossmeeting.app.LangPrefs.set(context, next)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (currentLang == "en") "Sign out" else "Sair") },
                                 leadingIcon = { Icon(Icons.Filled.ExitToApp, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false

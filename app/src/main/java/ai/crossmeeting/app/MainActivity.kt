@@ -38,6 +38,8 @@ enum class AppTab { HOME, MEETINGS, ACTIONS, BRIEFING }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Aplica o locale salvo antes de inflar qualquer view
+        LangPrefs.set(this, LangPrefs.get(this))
         installSplashScreen()
         super.onCreate(savedInstanceState)
         val launchUri = intent.data
