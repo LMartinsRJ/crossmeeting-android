@@ -46,7 +46,7 @@ fun LoginScreen() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "Grave, transcreva e organize suas reuniões.",
+            "Be present. We'll remember.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -60,11 +60,11 @@ fun LoginScreen() {
                 scope.launch {
                     runCatching {
                         SupabaseClientProvider.client.auth.signInWith(Google) {
-                            // Solicita acesso ao calendário junto com o login.
-                            // O Supabase devolverá providerRefreshToken na sessão.
                             scopes.add("https://www.googleapis.com/auth/calendar.readonly")
                             queryParams["access_type"] = "offline"
                             queryParams["prompt"] = "consent"
+                            // redirect_to gerado pelo SDK via scheme/host em SupabaseClient.kt
+                            // → https://crossmeeting-web.vercel.app/auth/desktop-callback
                         }
                     }.onFailure { error = it.message }
                     loading = false
@@ -87,7 +87,6 @@ fun LoginScreen() {
                 scope.launch {
                     runCatching {
                         SupabaseClientProvider.client.auth.signInWith(Azure) {
-                            // Calendars.Read + offline_access para ter refresh token
                             scopes.add("Calendars.Read")
                             scopes.add("offline_access")
                         }
