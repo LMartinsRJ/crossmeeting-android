@@ -119,9 +119,9 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
                                 setBody(EnhanceTranscriptRequest(transcript = transcript, meetingId = meetingId))
                             }
                             val bodyText = response.bodyAsText()
-                            android.util.Log.d("CMSave", "enhance ok para meetingId=$meetingId body=${bodyText.take(200)}")
+                            if (BuildConfig.DEBUG) android.util.Log.d("CMSave", "enhance ok para meetingId=$meetingId body=${bodyText.take(200)}")
                         }.onFailure { ex ->
-                            android.util.Log.e("CMSave", "enhance falhou para meetingId=$meetingId: ${ex::class.simpleName} ${ex.message}", ex)
+                            if (BuildConfig.DEBUG) android.util.Log.e("CMSave", "enhance falhou para meetingId=$meetingId: ${ex::class.simpleName} ${ex.message}", ex)
                         }
                     }
                 }
