@@ -134,7 +134,7 @@ class RecordingService : Service() {
                     .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
                     .build()
                 val client = HttpClient(OkHttp) {
-                    install(WebSockets) { pingInterval = 20_000 }
+                    install(WebSockets) { pingIntervalMillis = 20_000 }
                     engine {
                         config {
                             readTimeout(0, TimeUnit.MILLISECONDS)

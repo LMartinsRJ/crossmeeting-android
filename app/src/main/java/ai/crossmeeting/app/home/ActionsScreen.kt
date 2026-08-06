@@ -1,5 +1,6 @@
 package ai.crossmeeting.app.home
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,17 +26,17 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.time.LocalDate
 
-private fun isOverdue(dueDate: String?): Boolean {
+internal fun isOverdue(dueDate: String?): Boolean {
     if (dueDate == null) return false
     return try { LocalDate.parse(dueDate).isBefore(LocalDate.now()) } catch (e: Exception) { false }
 }
 
-private fun isDueToday(dueDate: String?): Boolean {
+internal fun isDueToday(dueDate: String?): Boolean {
     if (dueDate == null) return false
     return try { LocalDate.parse(dueDate) == LocalDate.now() } catch (e: Exception) { false }
 }
 
-private fun dueDateLabel(dueDate: String?): String {
+internal fun dueDateLabel(dueDate: String?): String {
     if (dueDate == null) return ""
     return try {
         val d = LocalDate.parse(dueDate)
@@ -96,8 +97,7 @@ fun ActionsScreen(
         }
     }
 
-    fun toggleDone(action: ActionItemRow) {
-        val newStatus = if (action.status == "concluída") "pendente" else "concluída"
+    fun updateStatus(action: ActionItemRow, newStatus: String) {
         scope.launch {
             runCatching {
                 SupabaseClientProvider.client.postgrest.from("action_items")
@@ -146,8 +146,11 @@ fun ActionsScreen(
                             modifier = Modifier.padding(vertical = 4.dp))
                     }
                     items(list, key = { it.id }) { action ->
-                        ActionCard(action = action, onToggle = { toggleDone(action) },
-                            onOpenMeeting = { action.meetingId?.let { onOpenMeeting(it) } })
+                        ActionCard(
+                            action = action,
+                            onStatusChange = { newStatus -> updateStatus(action, newStatus) },
+                            onOpenMeeting = { action.meetingId?.let { onOpenMeeting(it) } },
+                        )
                     }
                 }
 
@@ -168,52 +171,86 @@ fun ActionsScreen(
     }
 }
 
+val statusOptions = listOf("pendente", "em andamento", "concluída", "cancelada")
+
+internal fun statusLabel(status: String) = when (status) {
+    "pendente"      -> "Pendente"
+    "em andamento"  -> "Em andamento"
+    "concluída"     -> "Concluído"
+    "cancelada"     -> "Cancelado"
+    else            -> status.replaceFirstChar { it.uppercaseChar() }
+}
+
+internal fun statusColor(status: String, colorScheme: ColorScheme) = when (status) {
+    "concluída"     -> Color(0xFF26A69A)
+    "em andamento"  -> Color(0xFF6C8EFF)
+    "cancelada"     -> colorScheme.onSurfaceVariant
+    else            -> colorScheme.onSurfaceVariant
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ActionCard(action: ActionItemRow, onToggle: () -> Unit, onOpenMeeting: () -> Unit) {
-    val done = action.status == "concluída"
+internal fun ActionCard(
+    action: ActionItemRow,
+    onStatusChange: (String) -> Unit,
+    onOpenMeeting: () -> Unit,
+) {
+    val done = action.status == "concluída" || action.status == "cancelada"
     val overdue = isOverdue(action.dueDate)
     val today = isDueToday(action.dueDate)
+    var showSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable { showSheet = true },
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            IconButton(onClick = onToggle, modifier = Modifier.size(24.dp).padding(0.dp)) {
-                Icon(
-                    if (done) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                    contentDescription = if (done) "Marcar pendente" else "Marcar concluída",
-                    tint = if (done) CmWave else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            // Ícone de status
+            Icon(
+                if (done) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                contentDescription = null,
+                tint = statusColor(action.status, MaterialTheme.colorScheme),
+                modifier = Modifier.size(20.dp).padding(top = 2.dp),
+            )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     action.text,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (done) MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.onSurface,
+                    color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                     textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Chip de status
+                    Surface(
+                        color = statusColor(action.status, MaterialTheme.colorScheme).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Text(
+                            statusLabel(action.status),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusColor(action.status, MaterialTheme.colorScheme),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
                     // Chip de vencimento
                     if (action.dueDate != null) {
                         val chipColor = when {
-                            done -> Color.White.copy(alpha = 0.06f)
+                            done    -> Color.White.copy(alpha = 0.06f)
                             overdue -> MaterialTheme.colorScheme.errorContainer
-                            today -> MaterialTheme.colorScheme.primaryContainer
-                            else -> Color.White.copy(alpha = 0.06f)
+                            today   -> MaterialTheme.colorScheme.primaryContainer
+                            else    -> Color.White.copy(alpha = 0.06f)
                         }
                         val textColor = when {
-                            done -> MaterialTheme.colorScheme.onSurfaceVariant
+                            done    -> MaterialTheme.colorScheme.onSurfaceVariant
                             overdue -> MaterialTheme.colorScheme.onErrorContainer
-                            today -> MaterialTheme.colorScheme.onPrimaryContainer
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            today   -> MaterialTheme.colorScheme.onPrimaryContainer
+                            else    -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                         Surface(color = chipColor, shape = RoundedCornerShape(6.dp)) {
                             Text(dueDateLabel(action.dueDate),
@@ -222,25 +259,64 @@ private fun ActionCard(action: ActionItemRow, onToggle: () -> Unit, onOpenMeetin
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                         }
                     }
-                    // Fonte (reunião)
                     if (action.meetingTitle != null) {
-                        Surface(
-                            color = Color.White.copy(alpha = 0.06f),
-                            shape = RoundedCornerShape(6.dp),
-                            onClick = onOpenMeeting,
-                        ) {
-                            Text(action.meetingTitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
+                        Surface(color = Color.White.copy(alpha = 0.06f), shape = RoundedCornerShape(6.dp), onClick = onOpenMeeting) {
+                            Text(action.meetingTitle, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                         }
                     }
                 }
                 if (action.owner != null) {
-                    Text("→ ${action.owner}",
-                        style = MaterialTheme.typography.labelSmall,
+                    Text("→ ${action.owner}", style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+
+    if (showSheet) {
+        ModalBottomSheet(onDismissRequest = { showSheet = false }, sheetState = sheetState) {
+            Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp)) {
+                Text(
+                    action.text,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                )
+                Text("STATUS", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 10.dp))
+                statusOptions.forEach { status ->
+                    val selected = action.status == status
+                    Surface(
+                        color = if (selected) statusColor(status, MaterialTheme.colorScheme).copy(alpha = 0.12f)
+                                else MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                            .clickable {
+                                onStatusChange(status)
+                                showSheet = false
+                            },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (selected) statusColor(status, MaterialTheme.colorScheme)
+                                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Text(statusLabel(status),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (selected) statusColor(status, MaterialTheme.colorScheme)
+                                        else MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
                 }
             }
         }

@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ai.crossmeeting.app.ActionItemRow
 import ai.crossmeeting.app.MeetingDetailRow
 import ai.crossmeeting.app.SupabaseClientProvider
 import ai.crossmeeting.app.recording.ActionItem
@@ -28,6 +29,7 @@ import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -94,10 +96,12 @@ private fun formatDate(iso: String): String = runCatching {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MeetingDetailScreen(meetingId: Long, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
     var meeting by remember { mutableStateOf<MeetingDetailRow?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableStateOf(0) }
+    var dbActions by remember { mutableStateOf<List<ActionItemRow>>(emptyList()) }
 
     suspend fun loadMeeting() {
         runCatching {
@@ -110,8 +114,27 @@ fun MeetingDetailScreen(meetingId: Long, onBack: () -> Unit) {
         loading = false
     }
 
+    suspend fun loadActions() {
+        runCatching {
+            dbActions = SupabaseClientProvider.client.postgrest.from("action_items")
+                .select { filter { eq("meeting_id", meetingId) } }
+                .decodeList<ActionItemRow>()
+        }
+    }
+
+    fun updateActionStatus(action: ActionItemRow, newStatus: String) {
+        scope.launch {
+            runCatching {
+                SupabaseClientProvider.client.postgrest.from("action_items")
+                    .update(ActionStatusUpdate(newStatus)) { filter { eq("id", action.id) } }
+                dbActions = dbActions.map { if (it.id == action.id) it.copy(status = newStatus) else it }
+            }
+        }
+    }
+
     LaunchedEffect(meetingId) {
         loadMeeting()
+        loadActions()
         // Se não há enhancement mas há transcrição, a IA ainda está processando em background.
         // Recarrega a cada 15s até 6 vezes (90s máx) para exibir as notas assim que chegarem.
         if (meeting?.enhancement == null && (meeting?.wordCount ?: 0) > 0) {
@@ -206,7 +229,7 @@ fun MeetingDetailScreen(meetingId: Long, onBack: () -> Unit) {
 
                     when (selectedTab) {
                         0 -> TranscriptTab(segments, speakerColorMap)
-                        1 -> NotesTab(enhancement)
+                        1 -> NotesTab(enhancement, dbActions, onStatusChange = ::updateActionStatus)
                     }
                 }
             }
@@ -291,7 +314,11 @@ private fun TranscriptBlock(seg: TranscriptSegment, speakerColorMap: Map<String,
 }
 
 @Composable
-private fun NotesTab(enhancement: Enhancement?) {
+private fun NotesTab(
+    enhancement: Enhancement?,
+    dbActions: List<ActionItemRow>,
+    onStatusChange: (ActionItemRow, String) -> Unit,
+) {
     if (enhancement == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -339,12 +366,22 @@ private fun NotesTab(enhancement: Enhancement?) {
                 }
             }
         }
-        if (enhancement.actionItems.isNotEmpty()) {
+        if (dbActions.isNotEmpty() || enhancement.actionItems.isNotEmpty()) {
             item {
                 NoteSection("Ações") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        enhancement.actionItems.forEach { ai: ActionItem ->
-                            ActionItemRow(ai)
+                        if (dbActions.isNotEmpty()) {
+                            dbActions.forEach { action ->
+                                ActionCard(
+                                    action = action,
+                                    onStatusChange = { newStatus -> onStatusChange(action, newStatus) },
+                                    onOpenMeeting = {},
+                                )
+                            }
+                        } else {
+                            enhancement.actionItems.forEach { ai: ActionItem ->
+                                StaticActionItem(ai)
+                            }
                         }
                     }
                 }
@@ -370,8 +407,9 @@ private fun NotesTab(enhancement: Enhancement?) {
     }
 }
 
+
 @Composable
-private fun ActionItemRow(ai: ActionItem) {
+private fun StaticActionItem(ai: ActionItem) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -389,11 +427,7 @@ private fun ActionItemRow(ai: ActionItem) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(ai.text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                 if (ai.owner != null) {
-                    Text(
-                        ai.owner,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Text(ai.owner, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

@@ -15,7 +15,6 @@ object SupabaseClientProvider {
         supabaseKey = BuildConfig.SUPABASE_ANON_KEY,
     ) {
         install(Auth) {
-            // Usado para construir o deep link de retorno do login (crossmeeting://login-callback)
             scheme = "crossmeeting"
             host = "login-callback"
         }

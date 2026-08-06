@@ -78,6 +78,10 @@ class MainActivity : ComponentActivity() {
                         val observer = LifecycleEventObserver { _, event ->
                             if (event == Lifecycle.Event.ON_RESUME) {
                                 scope.launch {
+                                    // Só refresha se já existe sessão — evita interferir
+                                    // com handleDeeplinks que troca o código OAuth no onNewIntent.
+                                    val hasSession = SupabaseClientProvider.client.auth.currentSessionOrNull() != null
+                                    if (!hasSession) return@launch
                                     isRefreshingSession = true
                                     runCatching {
                                         SupabaseClientProvider.client.auth.refreshCurrentSession()
