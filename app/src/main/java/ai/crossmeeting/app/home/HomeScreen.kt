@@ -146,15 +146,15 @@ fun HomeScreen(
         meetings.filter { m -> meetingsToday.none { it.id == m.id } }.take(5)
     }
     val urgentActions = remember(actions) {
-        actions.filter { it.status != "concluída" && isDueTodayOrBefore(it.dueDate) }
+        actions.filter { !isFinished(it.status) && isDueTodayOrBefore(it.dueDate) }
             .sortedBy { it.dueDate }
     }
     val overdueCount = remember(actions) {
-        actions.count { it.status != "concluída" && it.dueDate != null &&
+        actions.count { !isFinished(it.status) && it.dueDate != null &&
             runCatching { LocalDate.parse(it.dueDate).isBefore(LocalDate.now()) }.getOrDefault(false) }
     }
     val dueTodayCount = remember(actions) {
-        actions.count { it.status != "concluída" &&
+        actions.count { !isFinished(it.status) &&
             runCatching { LocalDate.parse(it.dueDate ?: "") == LocalDate.now() }.getOrDefault(false) }
     }
 
