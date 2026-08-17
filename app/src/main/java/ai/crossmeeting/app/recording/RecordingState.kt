@@ -11,6 +11,12 @@ data class RecordingUiState(
     val finalTranscript: String = "",
     val interimText: String = "",
     val error: String? = null,
+    /**
+     * Queda de rede sendo recuperada (ex.: wifi → 4G). A gravação continua e o
+     * áudio é bufferizado; isto existe só para a tela avisar em vez de parecer
+     * travada. Não é erro — erro real usa [error] e encerra a sessão.
+     */
+    val reconnecting: Boolean = false,
     val saving: Boolean = false,
     val savedMeetingId: Long? = null,
     /** true só depois que o [RecordingService] terminou o desligamento gracioso (parou o
