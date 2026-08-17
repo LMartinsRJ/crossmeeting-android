@@ -27,10 +27,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.crossmeeting.app.CalendarAttendee
 import ai.crossmeeting.app.CalendarEventRow
-import ai.crossmeeting.app.MeetingRow
 import ai.crossmeeting.app.SupabaseClientProvider
 import ai.crossmeeting.app.ui.theme.CmBlue
 import ai.crossmeeting.app.ui.theme.CmWave
+import ai.crossmeeting.app.recording.LenientJson
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.github.jan.supabase.functions.functions
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
@@ -69,15 +73,30 @@ private fun dayLabel(date: LocalDate, zone: ZoneId): String {
 
 private fun formatTime(zdt: ZonedDateTime): String = "%02d:%02d".format(zdt.hour, zdt.minute)
 
-private fun isMeetingToday(createdAt: String, zone: ZoneId): Boolean = runCatching {
-    Instant.parse(createdAt).atZone(zone).toLocalDate() == LocalDate.now(zone)
-}.getOrDefault(false)
+@kotlinx.serialization.Serializable
+data class CreateEventRequest(
+    val title: String,
+    val startAt: String,
+    val endAt: String,
+    val attendees: List<String> = emptyList(),
+    val description: String? = null,
+    val generateVideoLink: Boolean = false,
+)
+
+@kotlinx.serialization.Serializable
+data class CreateEventResponse(
+    val eventId: String? = null,
+    val eventLink: String? = null,
+    val videoLink: String? = null,
+    val error: String? = null,
+    val detail: String? = null,
+)
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgendaScreen(
     modifier: Modifier = Modifier,
-    onOpenMeeting: (Long) -> Unit,
     onStartRecording: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -124,9 +143,10 @@ fun AgendaScreen(
     }
 
     var events by remember { mutableStateOf<List<CalendarEventRow>>(emptyList()) }
-    var recordings by remember { mutableStateOf<List<MeetingRow>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var showCreate by remember { mutableStateOf(false) }
+    var createdVideoLink by remember { mutableStateOf<String?>(null) }
     val zone: ZoneId = remember { deviceZone(context) }
 
     val groupedEvents: Map<LocalDate, List<CalendarEventRow>> = remember(events, zone) {
@@ -134,11 +154,6 @@ fun AgendaScreen(
         events.groupBy { ev ->
             calendarEventStart(ev, zone)?.toLocalDate() ?: today
         }.toSortedMap()
-    }
-
-    val todayRecordings = remember(recordings, zone) {
-        recordings.filter { it.deletedAt == null && isMeetingToday(it.createdAt, zone) }
-            .sortedByDescending { it.createdAt }
     }
 
     suspend fun loadData() {
@@ -158,7 +173,8 @@ fun AgendaScreen(
                     !end.isBefore(now) && start.isBefore(until)
                 }.getOrDefault(false)
             }
-            recordings = pg.from("meetings").select().decodeList<MeetingRow>()
+            // Gravações NÃO entram aqui: a Agenda reflete o calendário do
+            // usuário. As reuniões gravadas vivem na aba Transcrições.
         }.onFailure { error = it.message }
         loading = false
     }
@@ -184,6 +200,15 @@ fun AgendaScreen(
                 },
             )
         },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { showCreate = true },
+                containerColor = CmBlue,
+                contentColor = Color.White,
+                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                text = { Text("Nova reunião") },
+            )
+        },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = CmWave)
@@ -192,7 +217,7 @@ fun AgendaScreen(
             }
 
             // ─── Estado: sem eventos nos próximos 7 dias ──────────────────────
-            if (!loading && groupedEvents.isEmpty() && todayRecordings.isEmpty()) {
+            if (!loading && groupedEvents.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -209,21 +234,6 @@ fun AgendaScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                // ─── Gravações de hoje ────────────────────────────────────────
-                if (todayRecordings.isNotEmpty()) {
-                    item {
-                        Text(
-                            "GRAVAÇÕES DE HOJE",
-                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
-                        )
-                    }
-                    items(todayRecordings, key = { "rec-${it.id}" }) { meeting ->
-                        MeetingCard(meeting = meeting, onClick = { onOpenMeeting(meeting.id) })
-                    }
-                }
-
                 // ─── Agenda do calendário ─────────────────────────────────────
                 groupedEvents.forEach { (date, dayEvents) ->
                     item(key = "header-$date") {
@@ -248,6 +258,196 @@ fun AgendaScreen(
             }
         }
     }
+
+    if (showCreate) {
+        NewMeetingDialog(
+            zone = zone,
+            onDismiss = { showCreate = false },
+            onCreated = { videoLink ->
+                showCreate = false
+                createdVideoLink = videoLink
+                scope.launch { loadData() }
+            },
+        )
+    }
+
+    // Confirmação com o link da sala, para o usuário copiar/abrir na hora
+    createdVideoLink?.let { link ->
+        AlertDialog(
+            onDismissRequest = { createdVideoLink = null },
+            title = { Text("Reunião criada") },
+            text = {
+                Column {
+                    Text("Os convites foram enviados por e-mail.")
+                    if (link.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Sala de vídeo:", style = MaterialTheme.typography.labelMedium)
+                        Text(link, color = CmWave, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                if (link.isNotBlank()) {
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                        createdVideoLink = null
+                    }) { Text("Abrir sala") }
+                } else {
+                    TextButton(onClick = { createdVideoLink = null }) { Text("OK") }
+                }
+            },
+            dismissButton = {
+                if (link.isNotBlank()) TextButton(onClick = { createdVideoLink = null }) { Text("Fechar") }
+            },
+        )
+    }
+}
+
+/**
+ * Criação de reunião na agenda do usuário.
+ *
+ * Chama a edge function `calendar-create-event`, que cria no Google ou no
+ * Microsoft conforme o provedor da conta, dispara os convites por e-mail e
+ * opcionalmente gera a sala de vídeo. Nenhum token de calendário passa por aqui.
+ */
+@Composable
+private fun NewMeetingDialog(
+    zone: ZoneId,
+    onDismiss: () -> Unit,
+    onCreated: (String) -> Unit,
+) {
+    // Padrão: próxima hora cheia de amanhã
+    val default = remember {
+        ZonedDateTime.now(zone).plusDays(1).withMinute(0).withSecond(0).withNano(0).plusHours(1)
+    }
+    var title by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(default.toLocalDate().toString()) }
+    var time by remember { mutableStateOf("%02d:%02d".format(default.hour, 0)) }
+    var durationMin by remember { mutableStateOf(30) }
+    var attendees by remember { mutableStateOf("") }
+    var withVideo by remember { mutableStateOf(true) }
+    var saving by remember { mutableStateOf(false) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    val scope = rememberCoroutineScope()
+
+    fun submit() {
+        if (title.isBlank() || saving) return
+        saving = true
+        err = null
+        scope.launch {
+            runCatching {
+                val start = java.time.LocalDateTime.parse("${date.trim()}T${time.trim()}")
+                    .atZone(zone).toInstant()
+                val end = start.plusSeconds(durationMin * 60L)
+
+                val emails = attendees.split(",", ";", " ", "\n")
+                    .map { it.trim().lowercase() }
+                    .filter { it.contains("@") }
+
+                val response = SupabaseClientProvider.client.functions.invoke("calendar-create-event") {
+                    contentType(ContentType.Application.Json)
+                    setBody(CreateEventRequest(
+                        title = title.trim(),
+                        startAt = start.toString(),
+                        endAt = end.toString(),
+                        attendees = emails,
+                        generateVideoLink = withVideo,
+                    ))
+                }
+                val parsed = LenientJson
+                    .decodeFromString<CreateEventResponse>(response.bodyAsText())
+                if (parsed.eventId == null) {
+                    error(when (parsed.error) {
+                        "reauth_required"    -> "Reconecte sua conta de calendário nas configurações."
+                        "insufficient_scope" -> "Sua conta não tem permissão para criar eventos."
+                        "invalid_request"    -> parsed.detail ?: "Dados inválidos."
+                        else                 -> parsed.detail ?: parsed.error ?: "Erro ao criar a reunião."
+                    })
+                }
+                parsed.videoLink ?: ""
+            }.onSuccess { link ->
+                saving = false
+                onCreated(link)
+            }.onFailure {
+                saving = false
+                err = it.message ?: "Erro ao criar a reunião."
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("Nova reunião") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Título") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = date,
+                        onValueChange = { date = it },
+                        label = { Text("Data") },
+                        placeholder = { Text("AAAA-MM-DD") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1.4f),
+                    )
+                    OutlinedTextField(
+                        value = time,
+                        onValueChange = { time = it },
+                        label = { Text("Hora") },
+                        placeholder = { Text("HH:MM") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Column {
+                    Text("Duração", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(30, 60, 90).forEach { m ->
+                            FilterChip(
+                                selected = durationMin == m,
+                                onClick = { durationMin = m },
+                                label = { Text("${m}min") },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = attendees,
+                    onValueChange = { attendees = it },
+                    label = { Text("Participantes") },
+                    placeholder = { Text("emails separados por vírgula") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = withVideo, onCheckedChange = { withVideo = it })
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Criar sala de vídeo")
+                }
+                err?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { submit() }, enabled = title.isNotBlank() && !saving) {
+                Text(if (saving) "Criando..." else "Criar e convidar")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancelar") }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
