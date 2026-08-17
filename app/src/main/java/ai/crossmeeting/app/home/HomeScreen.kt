@@ -34,6 +34,15 @@ import ai.crossmeeting.app.MeetingRow
 import ai.crossmeeting.app.MeetingSpaceUpdate
 import ai.crossmeeting.app.SpaceRow
 import ai.crossmeeting.app.SupabaseClientProvider
+import ai.crossmeeting.app.BriefingCache
+import ai.crossmeeting.app.BriefingRequest
+import ai.crossmeeting.app.BriefingResponse
+import ai.crossmeeting.app.recording.LenientJson
+import io.github.jan.supabase.functions.functions
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import ai.crossmeeting.app.recording.RecordingService
 import ai.crossmeeting.app.ui.theme.CmBlue
 import ai.crossmeeting.app.ui.theme.CmWave
@@ -139,6 +148,8 @@ fun HomeScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     var currentLang by remember { mutableStateOf(ai.crossmeeting.app.LangPrefs.get(context)) }
     var meetingToMove by remember { mutableStateOf<MeetingRow?>(null) }
+    var briefingText by remember { mutableStateOf<String?>(null) }
+    var briefingLoading by remember { mutableStateOf(false) }
 
     val meetingsToday = remember(meetings) { meetings.filter { isMeetingToday(it.createdAt) } }
     val calendarTodayCount = remember(calendarToday) { calendarToday.size }
@@ -211,6 +222,30 @@ fun HomeScreen(
             }.onFailure { error = it.message }
             loading = false
         }
+    }
+
+    // Briefing do dia — cacheado por usuário e por dia, porque cada geração
+    // custa uma chamada ao Claude.
+    LaunchedEffect(Unit) {
+        val email = SupabaseClientProvider.client.auth.currentUserOrNull()?.email ?: return@LaunchedEffect
+        BriefingCache.get(context, email)?.let { briefingText = it; return@LaunchedEffect }
+
+        briefingLoading = true
+        runCatching {
+            val response = SupabaseClientProvider.client.functions.invoke("generate-briefing") {
+                contentType(ContentType.Application.Json)
+                setBody(BriefingRequest(firstName = userName(), dateLabel = fullDateLabel()))
+            }
+            val parsed = LenientJson.decodeFromString<BriefingResponse>(response.bodyAsText())
+            val text = parsed.text?.trim().orEmpty()
+            if (text.isNotEmpty()) {
+                briefingText = text
+                BriefingCache.put(context, email, text)
+            }
+        }
+        // Falha no briefing não deve poluir a tela com erro — é conteúdo
+        // complementar, e a home continua útil sem ele.
+        briefingLoading = false
     }
 
     LaunchedEffect(Unit) {
@@ -289,7 +324,7 @@ fun HomeScreen(
                                 leadingIcon = { Icon(Icons.Filled.ExitToApp, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
-                                    scope.launch { SupabaseClientProvider.client.auth.signOut() }
+                                    scope.launch { BriefingCache.clearAll(context); SupabaseClientProvider.client.auth.signOut() }
                                 },
                             )
                         }
@@ -384,6 +419,51 @@ fun HomeScreen(
                             error = overdueCount > 0,
                             modifier = Modifier.weight(1f),
                         )
+                    }
+                }
+
+                // ─── Briefing do dia ──────────────────────────────────────────
+                if (briefingLoading || briefingText != null) {
+                    item {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    "BRIEFING DO DIA",
+                                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
+                                    color = CmWave,
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                if (briefingLoading) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = CmWave,
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            "Gerando briefing...",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                } else {
+                                    // A IA devolve parágrafos separados por linha em branco
+                                    briefingText!!.split("\n\n").filter { it.isNotBlank() }.forEachIndexed { i, p ->
+                                        if (i > 0) Spacer(modifier = Modifier.height(10.dp))
+                                        Text(
+                                            p.trim(),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
