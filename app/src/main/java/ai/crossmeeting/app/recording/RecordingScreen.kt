@@ -182,6 +182,27 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
         Column(
             modifier = Modifier.padding(padding).fillMaxSize().padding(horizontal = 16.dp),
         ) {
+            // Queda de rede: avisa sem alarmar. A gravação continua e o áudio
+            // está sendo guardado — o usuário não deve parar achando que quebrou.
+            if (state.reconnecting) {
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = CmWave,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Reconectando — a gravação continua",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
             (state.error ?: saveError)?.let {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
                     Text("Erro: $it", color = MaterialTheme.colorScheme.error)

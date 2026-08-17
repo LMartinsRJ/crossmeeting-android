@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.*
@@ -18,6 +19,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.crossmeeting.app.ActionItemRow
+import ai.crossmeeting.app.ProfileRow
 import ai.crossmeeting.app.SupabaseClientProvider
 import ai.crossmeeting.app.ui.theme.CmWave
 import io.github.jan.supabase.postgrest.from
@@ -52,6 +54,25 @@ internal fun dueDateLabel(dueDate: String?): String {
 @Serializable
 data class ActionStatusUpdate(val status: String)
 
+/** Edição do texto e do responsável de uma ação já existente. */
+@Serializable
+data class ActionEditUpdate(val text: String, val owner: String? = null)
+
+/**
+ * Ação criada à mão, sem vínculo com reunião.
+ * status/tipo/prioridade são normalizados pelo trigger do banco de qualquer forma.
+ */
+@Serializable
+data class NewActionItem(
+    @kotlinx.serialization.SerialName("user_id") val userId: String,
+    val text: String,
+    val owner: String? = null,
+    @kotlinx.serialization.SerialName("due_date") val dueDate: String? = null,
+    val status: String = "pendente",
+    val tipo: String = "acao",
+    val prioridade: String = "media",
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ActionsScreen(
@@ -63,9 +84,10 @@ fun ActionsScreen(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf("pendentes") } // "pendentes" | "todas"
+    var showCreate by remember { mutableStateOf(false) }
 
     val filtered = remember(actions, filter) {
-        if (filter == "pendentes") actions.filter { it.status != "concluída" }
+        if (filter == "pendentes") actions.filter { !isFinished(it.status) }
         else actions
     }
 
@@ -107,6 +129,43 @@ fun ActionsScreen(
         }
     }
 
+    fun updateTextAndOwner(action: ActionItemRow, newText: String, newOwner: String?) {
+        val text = newText.trim()
+        if (text.isEmpty()) return
+        scope.launch {
+            runCatching {
+                SupabaseClientProvider.client.postgrest.from("action_items")
+                    .update(ActionEditUpdate(text, newOwner)) { filter { eq("id", action.id) } }
+                actions = actions.map {
+                    if (it.id == action.id) it.copy(text = text, owner = newOwner) else it
+                }
+            }.onFailure { error = it.message }
+        }
+    }
+
+    fun createAction(text: String, owner: String?, dueDate: String?) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        scope.launch {
+            runCatching {
+                // profiles.id é o UUID que action_items.user_id referencia — mesmo
+                // padrão usado no insert de reuniões em RecordingScreen.
+                val userId = SupabaseClientProvider.client.postgrest.from("profiles")
+                    .select().decodeSingle<ProfileRow>().id
+                SupabaseClientProvider.client.postgrest.from("action_items")
+                    .insert(NewActionItem(
+                        userId = userId,
+                        text = clean,
+                        owner = owner?.trim()?.ifBlank { null },
+                        dueDate = dueDate?.ifBlank { null },
+                    ))
+            }.onFailure { error = it.message }
+            // Relê do servidor em vez de decodificar o retorno do insert:
+            // garante que o id e os defaults do trigger venham corretos.
+            refresh()
+        }
+    }
+
     LaunchedEffect(Unit) { refresh() }
 
     Scaffold(
@@ -125,6 +184,14 @@ fun ActionsScreen(
                     )
                 },
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showCreate = true },
+                containerColor = CmWave,
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Nova ação")
+            }
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
@@ -149,6 +216,7 @@ fun ActionsScreen(
                         ActionCard(
                             action = action,
                             onStatusChange = { newStatus -> updateStatus(action, newStatus) },
+                            onEdit = { newText, newOwner -> updateTextAndOwner(action, newText, newOwner) },
                             onOpenMeeting = { action.meetingId?.let { onOpenMeeting(it) } },
                         )
                     }
@@ -169,23 +237,103 @@ fun ActionsScreen(
             }
         }
     }
+
+    if (showCreate) {
+        NewActionDialog(
+            onDismiss = { showCreate = false },
+            onCreate = { text, owner, dueDate ->
+                createAction(text, owner, dueDate)
+                showCreate = false
+            },
+        )
+    }
 }
 
-val statusOptions = listOf("pendente", "em andamento", "concluída", "cancelada")
+/** Diálogo de criação manual de ação. */
+@Composable
+internal fun NewActionDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String, String?, String?) -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    var owner by remember { mutableStateOf("") }
+    var dueDate by remember { mutableStateOf("") }
 
-internal fun statusLabel(status: String) = when (status) {
-    "pendente"      -> "Pendente"
-    "em andamento"  -> "Em andamento"
-    "concluída"     -> "Concluído"
-    "cancelada"     -> "Cancelado"
-    else            -> status.replaceFirstChar { it.uppercaseChar() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nova ação") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("O que precisa ser feito?") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                OutlinedTextField(
+                    value = owner,
+                    onValueChange = { owner = it },
+                    label = { Text("Responsável (opcional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = dueDate,
+                    onValueChange = { dueDate = it },
+                    label = { Text("Prazo — AAAA-MM-DD (opcional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCreate(text, owner.ifBlank { null }, dueDate.ifBlank { null }) },
+                enabled = text.isNotBlank(),
+            ) { Text("Criar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        },
+    )
 }
 
-internal fun statusColor(status: String, colorScheme: ColorScheme) = when (status) {
-    "concluída"     -> Color(0xFF26A69A)
-    "em andamento"  -> Color(0xFF6C8EFF)
-    "cancelada"     -> colorScheme.onSurfaceVariant
-    else            -> colorScheme.onSurfaceVariant
+// Vocabulário canônico de status — igual ao desktop, à web e ao CHECK do banco.
+// Antes o Android gravava "em andamento", "concluída" e "cancelada", variantes
+// que as outras plataformas não reconheciam nos filtros e nos mapas de cor.
+const val STATUS_PENDENTE = "pendente"
+const val STATUS_EM_ANDAMENTO = "em_andamento"
+const val STATUS_CONCLUIDO = "concluido"
+const val STATUS_CANCELADO = "cancelado"
+
+val statusOptions = listOf(STATUS_PENDENTE, STATUS_EM_ANDAMENTO, STATUS_CONCLUIDO, STATUS_CANCELADO)
+
+/** Aceita as variantes antigas na leitura — registros gravados antes da normalização. */
+internal fun normalizeStatus(status: String) = when (status.trim().lowercase()) {
+    "pendente" -> STATUS_PENDENTE
+    "em_andamento", "em andamento" -> STATUS_EM_ANDAMENTO
+    "concluido", "concluída", "concluida", "concluído" -> STATUS_CONCLUIDO
+    "cancelado", "cancelada" -> STATUS_CANCELADO
+    else -> STATUS_PENDENTE
+}
+
+internal fun isFinished(status: String) =
+    normalizeStatus(status).let { it == STATUS_CONCLUIDO || it == STATUS_CANCELADO }
+
+internal fun statusLabel(status: String) = when (normalizeStatus(status)) {
+    STATUS_PENDENTE      -> "Pendente"
+    STATUS_EM_ANDAMENTO  -> "Em andamento"
+    STATUS_CONCLUIDO     -> "Concluído"
+    STATUS_CANCELADO     -> "Cancelado"
+    else                 -> status.replaceFirstChar { it.uppercaseChar() }
+}
+
+internal fun statusColor(status: String, colorScheme: ColorScheme) = when (normalizeStatus(status)) {
+    STATUS_CONCLUIDO     -> Color(0xFF26A69A)
+    STATUS_EM_ANDAMENTO  -> Color(0xFF6C8EFF)
+    STATUS_CANCELADO     -> colorScheme.onSurfaceVariant
+    else                 -> colorScheme.onSurfaceVariant
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,12 +342,20 @@ internal fun ActionCard(
     action: ActionItemRow,
     onStatusChange: (String) -> Unit,
     onOpenMeeting: () -> Unit,
+    // Opcional: telas que só exibem a ação (ex.: detalhe da reunião) não passam,
+    // e aí o botão "Editar" nem aparece.
+    onEdit: ((String, String?) -> Unit)? = null,
 ) {
-    val done = action.status == "concluída" || action.status == "cancelada"
+    val done = isFinished(action.status)
     val overdue = isOverdue(action.dueDate)
     val today = isDueToday(action.dueDate)
     var showSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Rascunhos de edição — reiniciam sempre que a ação muda por fora
+    var editing by remember(action.id) { mutableStateOf(false) }
+    var draftText by remember(action.id, action.text) { mutableStateOf(action.text) }
+    var draftOwner by remember(action.id, action.owner) { mutableStateOf(action.owner ?: "") }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -278,12 +434,56 @@ internal fun ActionCard(
     if (showSheet) {
         ModalBottomSheet(onDismissRequest = { showSheet = false }, sheetState = sheetState) {
             Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp)) {
-                Text(
-                    action.text,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(bottom = 16.dp),
-                )
+                if (editing) {
+                    OutlinedTextField(
+                        value = draftText,
+                        onValueChange = { draftText = it },
+                        label = { Text("Ação") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = draftOwner,
+                        onValueChange = { draftOwner = it },
+                        label = { Text("Responsável") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = {
+                            draftText = action.text
+                            draftOwner = action.owner ?: ""
+                            editing = false
+                        }) { Text("Cancelar") }
+                        TextButton(
+                            onClick = {
+                                onEdit?.invoke(draftText, draftOwner.ifBlank { null })
+                                editing = false
+                            },
+                            enabled = draftText.isNotBlank(),
+                        ) { Text("Salvar") }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            action.text,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (onEdit != null) {
+                            TextButton(onClick = { editing = true }) { Text("Editar") }
+                        }
+                    }
+                }
                 Text("STATUS", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 10.dp))

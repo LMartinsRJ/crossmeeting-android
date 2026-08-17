@@ -195,7 +195,6 @@ class MainActivity : ComponentActivity() {
                                 )
                                 AppTab.MEETINGS -> AgendaScreen(
                                     modifier = Modifier.padding(innerPadding),
-                                    onOpenMeeting = { openMeetingId = it },
                                     onStartRecording = { recording = true },
                                 )
                                 AppTab.ACTIONS -> ActionsScreen(

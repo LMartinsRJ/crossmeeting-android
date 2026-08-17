@@ -31,7 +31,7 @@ data class ActionItemRow(
     val owner: String? = null,
     @kotlinx.serialization.SerialName("due_date") val dueDate: String? = null,
     val status: String = "pendente",
-    val prioridade: String = "média",
+    val prioridade: String = "media",
     @kotlinx.serialization.SerialName("meeting_title") val meetingTitle: String? = null,
     @kotlinx.serialization.SerialName("meeting_id") val meetingId: Long? = null,
     @kotlinx.serialization.SerialName("done_at") val doneAt: String? = null,

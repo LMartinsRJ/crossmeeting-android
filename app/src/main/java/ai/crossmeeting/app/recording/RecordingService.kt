@@ -74,8 +74,28 @@ class RecordingService : Service() {
     private var mediaProjection: MediaProjection? = null
 
     private var wsClient: HttpClient? = null
-    private var wsSession: io.ktor.client.plugins.websocket.DefaultClientWebSocketSession? = null
+    @Volatile private var wsSession: io.ktor.client.plugins.websocket.DefaultClientWebSocketSession? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // ── Reconexão automática ─────────────────────────────────────────────────
+    //
+    // Trocar de wifi para 4G derruba o WebSocket. Antes, a falha de envio caía
+    // no catch genérico do audioJob, que fazia isRecording = false e stopSelf():
+    // a gravação morria na troca de rede e tudo dito depois era perdido.
+    //
+    // A reunião não é dividida por isso: a transcrição acumula em RecordingState,
+    // não no socket. Reabrir a conexão é invisível para quem grava.
+
+    /** 16 kHz × 16 bits mono = 32 KB/s. */
+    private val bytesPerSecond = SAMPLE_RATE * 2
+    /** Guarda até 30 s de áudio enquanto reconecta (~960 KB). */
+    private val maxBufferBytes = 30 * bytesPerSecond
+
+    @Volatile private var socketConnected = false
+    private val pendingAudio = ArrayDeque<ByteArray>()
+    private var pendingBytes = 0
+    private val bufferLock = Any()
+    private var reconnectAttempt = 0
 
     // Canal para misturar os dois streams de áudio antes de enviar ao Deepgram
     private val mixChannel = Channel<ByteArray>(capacity = 16)
@@ -126,10 +146,6 @@ class RecordingService : Service() {
 
         audioJob = serviceScope.launch {
             try {
-                val tokenResponse = SupabaseClientProvider.client.functions.invoke("deepgram-token")
-                val tokenBody = LenientJson.decodeFromString<DeepgramTokenResponse>(tokenResponse.bodyAsText())
-                val token = tokenBody.token ?: error(tokenBody.error ?: "Token do Deepgram não recebido")
-
                 val tlsSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                     .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
                     .build()
@@ -144,53 +160,176 @@ class RecordingService : Service() {
                 }
                 wsClient = client
 
-                val session = client.webSocketSession(
-                    method = HttpMethod.Get,
-                    host = "api.deepgram.com",
-                    path = "/v1/listen",
-                ) {
-                    url.protocol = URLProtocol.WSS
-                    url.port = URLProtocol.WSS.defaultPort
-                    url.parameters.append("model", "nova-3")
-                    url.parameters.append("language", "pt-BR")
-                    url.parameters.append("smart_format", "true")
-                    url.parameters.append("interim_results", "true")
-                    url.parameters.append("punctuate", "true")
-                    url.parameters.append("encoding", "linear16")
-                    url.parameters.append("sample_rate", SAMPLE_RATE.toString())
-                    url.parameters.append("channels", "1")
-                    header("Authorization", "Bearer $token")
-                }
-                wsSession = session
+                // Primeira conexão precisa dar certo — sem ela não há o que gravar.
+                val first = openSession(client)
+                    ?: error("Não foi possível conectar ao serviço de transcrição.")
+
+                wsSession = first
+                socketConnected = true
                 if (BuildConfig.DEBUG) Log.d(TAG, "WebSocket conectado, hasPlayback=$hasPlayback")
 
                 startTimer()
+                startCapture(hasPlayback)
 
-                if (hasPlayback) {
+                // A captura roda independente da conexão daqui em diante: este
+                // laço só cuida do transporte, reabrindo quando cair.
+                var session = first
+                while (RecordingState.state.value.isRecording) {
                     try {
-                        startMixedCapture(session)
+                        for (frame in session.incoming) {
+                            if (frame is Frame.Text) handleDeepgramMessage(frame.readText())
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (e: Exception) {
-                        Log.w(TAG, "AudioPlaybackCapture falhou, usando mic-only: ${e.message}")
-                        micRecord?.let { runCatching { it.stop(); it.release() } }
-                        micRecord = null
-                        micJob = serviceScope.launch { startMicOnlyCapture(session) }
+                        Log.w(TAG, "conexão caiu: ${e.message}")
                     }
-                } else {
-                    micJob = serviceScope.launch { startMicOnlyCapture(session) }
-                }
 
-                for (frame in session.incoming) {
-                    if (frame is Frame.Text) handleDeepgramMessage(frame.readText())
+                    socketConnected = false
+                    wsSession = null
+                    if (!RecordingState.state.value.isRecording) break
+
+                    // Caiu durante a gravação — reconecta com backoff
+                    RecordingState.update { it.copy(reconnecting = true) }
+                    val delayMs = nextBackoffDelay()
+                    if (BuildConfig.DEBUG) Log.d(TAG, "reconectando em ${delayMs}ms (tentativa $reconnectAttempt)")
+                    kotlinx.coroutines.delay(delayMs)
+                    if (!RecordingState.state.value.isRecording) break
+
+                    val reopened = openSession(client)
+                    if (reopened == null) continue   // falhou: tenta de novo com backoff maior
+
+                    session = reopened
+                    wsSession = reopened
+                    socketConnected = true
+                    reconnectAttempt = 0
+                    RecordingState.update { it.copy(reconnecting = false) }
+                    flushPendingAudio()
+                    if (BuildConfig.DEBUG) Log.d(TAG, "reconectado")
                 }
-                if (BuildConfig.DEBUG) Log.d(TAG, "incoming loop encerrado")
+                if (BuildConfig.DEBUG) Log.d(TAG, "laço de conexão encerrado")
 
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "erro no fluxo de gravação", e)
-                RecordingState.update { it.copy(error = e.message, isRecording = false) }
+                RecordingState.update { it.copy(error = e.message, isRecording = false, reconnecting = false) }
                 releaseWakeLock()
                 stopSelf()
+            }
+        }
+    }
+
+    /** Abre uma conexão com o Deepgram. Devolve null em falha, sem lançar. */
+    private suspend fun openSession(
+        client: HttpClient,
+    ): io.ktor.client.plugins.websocket.DefaultClientWebSocketSession? = try {
+        // Token novo a cada tentativa: hoje é uma API key longa, mas quando
+        // migrarmos para token temporário (B8/Fase 4) isto já estará certo.
+        val tokenResponse = SupabaseClientProvider.client.functions.invoke("deepgram-token")
+        val tokenBody = LenientJson.decodeFromString<DeepgramTokenResponse>(tokenResponse.bodyAsText())
+        val token = tokenBody.token ?: error(tokenBody.error ?: "Token do Deepgram não recebido")
+
+        client.webSocketSession(
+            method = HttpMethod.Get,
+            host = "api.deepgram.com",
+            path = "/v1/listen",
+        ) {
+            url.protocol = URLProtocol.WSS
+            url.port = URLProtocol.WSS.defaultPort
+            url.parameters.append("model", "nova-3")
+            url.parameters.append("language", "pt-BR")
+            url.parameters.append("smart_format", "true")
+            url.parameters.append("interim_results", "true")
+            url.parameters.append("punctuate", "true")
+            url.parameters.append("encoding", "linear16")
+            url.parameters.append("sample_rate", SAMPLE_RATE.toString())
+            url.parameters.append("channels", "1")
+            // "Token", não "Bearer": a deepgram-token devolve uma API key,
+            // e o Deepgram só aceita Bearer para tokens temporários do
+            // endpoint /auth/grant. Com Bearer o handshake volta 401.
+            header("Authorization", "Token $token")
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(TAG, "falha ao abrir sessão: ${e.message}")
+        null
+    }
+
+    /** 0s, 1s, 2s, 4s, 8s, teto de 10s. */
+    private fun nextBackoffDelay(): Long {
+        val delay = if (reconnectAttempt == 0) 0L
+                    else minOf(10_000L, 1000L * (1L shl minOf(reconnectAttempt - 1, 4)))
+        reconnectAttempt = minOf(reconnectAttempt + 1, 10)
+        return delay
+    }
+
+    private fun startCapture(hasPlayback: Boolean) {
+        if (hasPlayback) {
+            try {
+                startMixedCapture()
+            } catch (e: Exception) {
+                Log.w(TAG, "AudioPlaybackCapture falhou, usando mic-only: ${e.message}")
+                micRecord?.let { runCatching { it.stop(); it.release() } }
+                micRecord = null
+                micJob = serviceScope.launch { startMicOnlyCapture() }
+            }
+        } else {
+            micJob = serviceScope.launch { startMicOnlyCapture() }
+        }
+    }
+
+    /**
+     * Envia áudio pela conexão atual; se estiver fora do ar, guarda no buffer.
+     * É o ponto único que desacopla a captura do transporte.
+     */
+    private suspend fun sendAudio(bytes: ByteArray) {
+        val session = wsSession
+        if (session != null && socketConnected) {
+            try {
+                session.send(Frame.Binary(true, bytes))
+                return
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Caiu entre a checagem e o envio — cai para o buffer
+                socketConnected = false
+            }
+        }
+
+        if (!RecordingState.state.value.isRecording) return
+
+        synchronized(bufferLock) {
+            pendingAudio.addLast(bytes)
+            pendingBytes += bytes.size
+            // Queda longa: descarta o mais antigo. Perde-se um trecho, mas a
+            // gravação continua em vez de estourar a memória.
+            while (pendingBytes > maxBufferBytes && pendingAudio.isNotEmpty()) {
+                pendingBytes -= pendingAudio.removeFirst().size
+            }
+        }
+    }
+
+    /** Despeja o áudio acumulado. O Deepgram aceita mais rápido que tempo real. */
+    private suspend fun flushPendingAudio() {
+        val session = wsSession ?: return
+        val chunks = synchronized(bufferLock) {
+            val copy = pendingAudio.toList()
+            pendingAudio.clear()
+            pendingBytes = 0
+            copy
+        }
+        if (chunks.isEmpty()) return
+        if (BuildConfig.DEBUG) Log.d(TAG, "despejando ${chunks.size} chunks bufferizados")
+        for (chunk in chunks) {
+            try {
+                session.send(Frame.Binary(true, chunk))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                socketConnected = false
+                break
             }
         }
     }
@@ -198,7 +337,7 @@ class RecordingService : Service() {
     // ── Captura mista: mic + playback de outros apps ──────────────────────────
 
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
-    private fun startMixedCapture(session: io.ktor.client.plugins.websocket.DefaultClientWebSocketSession) {
+    private fun startMixedCapture() {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufSz  = maxOf(minBuf, SAMPLE_RATE)
 
@@ -238,7 +377,7 @@ class RecordingService : Service() {
                 val len = minOf(micRead, pbRead).coerceAtLeast(0)
                 if (len > 0) {
                     val mixed = mixPcm16(micBuf, pbBuf, len)
-                    session.send(Frame.Binary(true, mixed))
+                    sendAudio(mixed)
                     AudioLevelState.set(pcm16Amplitude(mixed, len))
                     if (BuildConfig.DEBUG && ++frames % 20 == 0) Log.d(TAG, "mixed frames=$frames")
                 }
@@ -249,7 +388,7 @@ class RecordingService : Service() {
 
     // ── Captura só microfone (fallback) ───────────────────────────────────────
 
-    private suspend fun startMicOnlyCapture(session: io.ktor.client.plugins.websocket.DefaultClientWebSocketSession) {
+    private suspend fun startMicOnlyCapture() {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufSz  = maxOf(minBuf, SAMPLE_RATE)
         val mic = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSz)
@@ -261,7 +400,7 @@ class RecordingService : Service() {
         while (RecordingState.state.value.isRecording) {
             val read = mic.read(buffer, 0, buffer.size)
             if (read > 0) {
-                session.send(Frame.Binary(true, buffer.copyOf(read)))
+                sendAudio(buffer.copyOf(read))
                 AudioLevelState.set(pcm16Amplitude(buffer, read))
                 if (BuildConfig.DEBUG && ++frames % 20 == 0) Log.d(TAG, "mic-only frames=$frames")
             }
@@ -324,7 +463,10 @@ class RecordingService : Service() {
     // ── Stop ──────────────────────────────────────────────────────────────────
 
     private fun stopRecording() {
-        RecordingState.update { it.copy(isRecording = false) }
+        // isRecording = false ANTES de tudo: é o sinal que faz o laço de conexão
+        // parar de reconectar e os loops de captura encerrarem.
+        RecordingState.update { it.copy(isRecording = false, reconnecting = false) }
+        reconnectAttempt = 0
 
         micJob?.cancel(); pbJob?.cancel()
         micRecord?.let { runCatching { it.stop() }; it.release() }; micRecord = null
@@ -333,6 +475,10 @@ class RecordingService : Service() {
         timerJob?.cancel()
 
         serviceScope.launch {
+            // Última chance de enviar o que ficou bufferizado numa queda recente
+            runCatching { flushPendingAudio() }
+            synchronized(bufferLock) { pendingAudio.clear(); pendingBytes = 0 }
+
             val closeResult = runCatching { wsSession?.send(Frame.Text("""{"type":"CloseStream"}""")) }
             if (BuildConfig.DEBUG) Log.d(TAG, "CloseStream: ${closeResult.isSuccess}")
             kotlinx.coroutines.delay(1200)
