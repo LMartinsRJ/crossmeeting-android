@@ -159,7 +159,10 @@ class RecordingService : Service() {
                     url.parameters.append("encoding", "linear16")
                     url.parameters.append("sample_rate", SAMPLE_RATE.toString())
                     url.parameters.append("channels", "1")
-                    header("Authorization", "Bearer $token")
+                    // "Token", não "Bearer": a deepgram-token devolve uma API key,
+                    // e o Deepgram só aceita Bearer para tokens temporários do
+                    // endpoint /auth/grant. Com Bearer o handshake volta 401.
+                    header("Authorization", "Token $token")
                 }
                 wsSession = session
                 if (BuildConfig.DEBUG) Log.d(TAG, "WebSocket conectado, hasPlayback=$hasPlayback")
