@@ -211,7 +211,6 @@ fun AllMeetingsScreen(
     }
 }
 
-@Composable
 /** Payload do soft delete — só o campo que muda, para não sobrescrever o resto. */
 @kotlinx.serialization.Serializable
 data class MeetingTrashUpdate(
