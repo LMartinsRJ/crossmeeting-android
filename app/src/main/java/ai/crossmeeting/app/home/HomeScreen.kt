@@ -224,6 +224,33 @@ fun HomeScreen(
         }
     }
 
+    // As ações da home usam o mesmo ActionCard da aba Ações, então precisam das
+    // mesmas operações. Sem isso o card abria o bottom sheet e nada funcionava.
+
+    fun updateActionStatus(action: ActionItemRow, newStatus: String) {
+        scope.launch {
+            runCatching {
+                SupabaseClientProvider.client.postgrest.from("action_items")
+                    .update(ActionStatusUpdate(newStatus)) { filter { eq("id", action.id) } }
+                actions = actions.map { if (it.id == action.id) it.copy(status = newStatus) else it }
+            }.onFailure { error = it.message }
+        }
+    }
+
+    fun updateActionTextAndOwner(action: ActionItemRow, newText: String, newOwner: String?) {
+        val text = newText.trim()
+        if (text.isEmpty()) return
+        scope.launch {
+            runCatching {
+                SupabaseClientProvider.client.postgrest.from("action_items")
+                    .update(ActionEditUpdate(text, newOwner)) { filter { eq("id", action.id) } }
+                actions = actions.map {
+                    if (it.id == action.id) it.copy(text = text, owner = newOwner) else it
+                }
+            }.onFailure { error = it.message }
+        }
+    }
+
     // Briefing do dia — cacheado por usuário e por dia, porque cada geração
     // custa uma chamada ao Claude.
     LaunchedEffect(Unit) {
@@ -505,8 +532,14 @@ fun HomeScreen(
                         )
                     }
                     items(urgentActions, key = { "action-${it.id}" }) { action ->
-                        BriefingActionCard(action = action,
-                            onOpenMeeting = { action.meetingId?.let { onOpenMeeting(it) } })
+                        // Mesmo card da aba Ações: toca e abre o bottom sheet com
+                        // status e edição, em vez de um cartão inerte.
+                        ActionCard(
+                            action = action,
+                            onStatusChange = { newStatus -> updateActionStatus(action, newStatus) },
+                            onOpenMeeting = { action.meetingId?.let { onOpenMeeting(it) } },
+                            onEdit = { newText, newOwner -> updateActionTextAndOwner(action, newText, newOwner) },
+                        )
                     }
                 }
 

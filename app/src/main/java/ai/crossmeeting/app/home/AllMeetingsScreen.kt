@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material3.*
@@ -23,6 +24,7 @@ import ai.crossmeeting.app.MeetingRow
 import ai.crossmeeting.app.SpaceRow
 import ai.crossmeeting.app.SupabaseClientProvider
 import ai.crossmeeting.app.ui.theme.CmWave
+import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -96,6 +98,27 @@ fun AllMeetingsScreen(
         }
     }
 
+    /**
+     * Move para a lixeira (soft delete). Mesmo comportamento do desktop e da web:
+     * marca `deleted_at` em vez de apagar, e o pg_cron limpa depois de 15 dias.
+     */
+    fun moveToTrash(meeting: MeetingRow) {
+        // Some da lista na hora; volta se o servidor recusar
+        val before = meetings
+        meetings = meetings.filter { it.id != meeting.id }
+        scope.launch {
+            runCatching {
+                SupabaseClientProvider.client.postgrest.from("meetings")
+                    .update(MeetingTrashUpdate(java.time.Instant.now().toString())) {
+                        filter { eq("id", meeting.id) }
+                    }
+            }.onFailure {
+                meetings = before
+                error = "Não foi possível excluir: ${it.message}"
+            }
+        }
+    }
+
     LaunchedEffect(Unit) { refresh() }
 
     Scaffold(
@@ -158,8 +181,12 @@ fun AllMeetingsScreen(
                             }
                         }
                     }
-                    items(list) { meeting ->
-                        HistoryCard(meeting = meeting, onClick = { onOpenMeeting(meeting.id) })
+                    items(list, key = { it.id }) { meeting ->
+                        SwipeToDeleteMeeting(
+                            onDelete = { moveToTrash(meeting) },
+                        ) {
+                            HistoryCard(meeting = meeting, onClick = { onOpenMeeting(meeting.id) })
+                        }
                     }
                 }
 
@@ -182,6 +209,73 @@ fun AllMeetingsScreen(
             }
         }
     }
+}
+
+@Composable
+/** Payload do soft delete — só o campo que muda, para não sobrescrever o resto. */
+@kotlinx.serialization.Serializable
+data class MeetingTrashUpdate(
+    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String,
+)
+
+/**
+ * Deslizar para a esquerda exclui a reunião.
+ *
+ * Um arraste curto mostra a faixa vermelha com o ícone e volta ao soltar; passar
+ * de 55% da largura confirma a exclusão. É o padrão que o usuário já conhece de
+ * apps de e-mail: dá para "espiar" a ação sem cometê-la, e um gesto decidido
+ * resolve de uma vez.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeToDeleteMeeting(
+    onDelete: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val state = rememberSwipeToDismissBoxState(
+        // 55% da largura: exige intenção, mas não obriga a arrastar a tela toda
+        positionalThreshold = { total -> total * 0.55f },
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else false
+        },
+    )
+
+    SwipeToDismissBox(
+        state = state,
+        enableDismissFromStartToEnd = false,   // só da direita para a esquerda
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            // Só pinta o fundo quando o gesto é o de exclusão
+            if (state.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(horizontal = 20.dp),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Excluir",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = "Excluir",
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
+        },
+        content = { content() },
+    )
 }
 
 @Composable
