@@ -23,6 +23,7 @@ import ai.crossmeeting.app.MeetingIdRow
 import ai.crossmeeting.app.NewMeeting
 import ai.crossmeeting.app.ProfileRow
 import ai.crossmeeting.app.SupabaseClientProvider
+import ai.crossmeeting.app.ui.theme.CmAmber
 import ai.crossmeeting.app.ui.theme.CmBlue
 import ai.crossmeeting.app.ui.theme.CmWave
 import io.github.jan.supabase.functions.functions
@@ -201,6 +202,35 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+            }
+
+            // Silêncio: avisa antes de encerrar e deixa continuar. Sem isso, uma
+            // pausa longa e legítima encerraria a gravação sem aviso.
+            if (state.silenceWarning) {
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Sem fala há um tempo — encerrando em breve",
+                        color = CmAmber,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(onClick = { RecordingState.markSpeech() }) {
+                        Text("Continuar", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+
+            // Duração: sem botão de continuar — o teto é do plano.
+            if (state.durationWarning) {
+                Text(
+                    "Perto do limite de duração — encerrando em breve",
+                    color = CmAmber,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
 
             (state.error ?: saveError)?.let {

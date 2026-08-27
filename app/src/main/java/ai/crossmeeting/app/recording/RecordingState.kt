@@ -17,6 +17,10 @@ data class RecordingUiState(
      * travada. Não é erro — erro real usa [error] e encerra a sessão.
      */
     val reconnecting: Boolean = false,
+    /** Sem nenhuma palavra transcrita há um tempo — encerramento se aproxima. */
+    val silenceWarning: Boolean = false,
+    /** Perto do teto de duração da reunião. */
+    val durationWarning: Boolean = false,
     val saving: Boolean = false,
     val savedMeetingId: Long? = null,
     /** true só depois que o [RecordingService] terminou o desligamento gracioso (parou o
@@ -38,8 +42,27 @@ object RecordingState {
         _state.update(transform)
     }
 
+    /**
+     * Instante da última palavra transcrita. Fica aqui, e não no serviço, porque
+     * a tela também precisa mexer: o botão "continuar gravando" do aviso de
+     * silêncio adia o encerramento.
+     *
+     * `@Volatile` porque é escrito pela thread do WebSocket e lido pelo laço do
+     * timer, em outra coroutine.
+     */
+    @Volatile
+    var lastSpeechAt: Long = System.currentTimeMillis()
+        private set
+
+    /** Marca fala agora e retira o aviso de silêncio, se estiver na tela. */
+    fun markSpeech() {
+        lastSpeechAt = System.currentTimeMillis()
+        _state.update { if (it.silenceWarning) it.copy(silenceWarning = false) else it }
+    }
+
     fun reset() {
         _state.value = RecordingUiState()
+        lastSpeechAt = System.currentTimeMillis()
         AudioLevelState.reset()
     }
 }

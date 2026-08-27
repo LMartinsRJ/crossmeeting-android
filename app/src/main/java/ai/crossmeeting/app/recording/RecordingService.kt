@@ -55,6 +55,17 @@ class RecordingService : Service() {
         /** 2h10 — mesmo teto do desktop. */
         private const val DEFAULT_MAX_MEETING_SECONDS = 130 * 60
 
+        /**
+         * Encerramento por silêncio, igual ao desktop. O gatilho é palavra
+         * transcrita, não nível de áudio: ventilador, ar-condicionado ou
+         * digitação manteriam a sessão viva para sempre se o critério fosse som.
+         */
+        private const val SILENCE_WARN_MS = 13 * 60 * 1000L
+        private const val SILENCE_END_MS  = 15 * 60 * 1000L
+
+        /** Antecedência do aviso de duração, em segundos. */
+        private const val DURATION_WARN_LEAD_SECONDS = 5 * 60
+
         const val ACTION_START = "ai.crossmeeting.app.recording.START"
         const val ACTION_STOP  = "ai.crossmeeting.app.recording.STOP"
         const val EXTRA_PROJECTION_RESULT_CODE = "projection_result_code"
@@ -455,6 +466,8 @@ class RecordingService : Service() {
             .onSuccess { msg ->
                 val transcript = msg.channel?.alternatives?.firstOrNull()?.transcript.orEmpty()
                 if (transcript.isBlank()) return
+                // Interim também conta: significa que há fala sendo captada agora.
+                RecordingState.markSpeech()
                 RecordingState.update { cur ->
                     if (msg.isFinal) cur.copy(finalTranscript = (cur.finalTranscript + " " + transcript).trim(), interimText = "")
                     else cur.copy(interimText = transcript)
@@ -473,10 +486,29 @@ class RecordingService : Service() {
 
                 // Encerra pelo mesmo caminho do botão parar: salva e processa,
                 // então nada do que foi falado se perde.
-                if (RecordingState.state.value.elapsedSeconds >= maxMeetingSeconds) {
+                val elapsed = RecordingState.state.value.elapsedSeconds
+                if (elapsed >= maxMeetingSeconds) {
                     Log.i(TAG, "Limite de duracao atingido (${maxMeetingSeconds}s); encerrando")
                     stopRecording()
                     break
+                }
+
+                val nearDuration = elapsed >= maxMeetingSeconds - DURATION_WARN_LEAD_SECONDS
+                if (nearDuration != RecordingState.state.value.durationWarning) {
+                    RecordingState.update { it.copy(durationWarning = nearDuration) }
+                }
+
+                // Silêncio. Uma reunião pode ter minutos legítimos sem fala
+                // (alguém lendo um documento), por isso o aviso vem antes, com
+                // opção de continuar.
+                val idle = System.currentTimeMillis() - RecordingState.lastSpeechAt
+                if (idle >= SILENCE_END_MS) {
+                    Log.i(TAG, "Sem transcricao ha ${idle / 1000}s; encerrando")
+                    stopRecording()
+                    break
+                }
+                if (idle >= SILENCE_WARN_MS && !RecordingState.state.value.silenceWarning) {
+                    RecordingState.update { it.copy(silenceWarning = true) }
                 }
             }
         }
