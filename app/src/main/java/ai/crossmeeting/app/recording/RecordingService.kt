@@ -26,6 +26,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.getSystemService
 import io.github.jan.supabase.functions.functions
+import io.github.jan.supabase.postgrest.postgrest
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.ConnectionSpec
@@ -51,6 +52,9 @@ import kotlinx.coroutines.launch
 class RecordingService : Service() {
 
     companion object {
+        /** 2h10 — mesmo teto do desktop. */
+        private const val DEFAULT_MAX_MEETING_SECONDS = 130 * 60
+
         const val ACTION_START = "ai.crossmeeting.app.recording.START"
         const val ACTION_STOP  = "ai.crossmeeting.app.recording.STOP"
         const val EXTRA_PROJECTION_RESULT_CODE = "projection_result_code"
@@ -99,6 +103,15 @@ class RecordingService : Service() {
 
     // Canal para misturar os dois streams de áudio antes de enviar ao Deepgram
     private val mixChannel = Channel<ByteArray>(capacity = 16)
+
+    // Teto de duração de uma reunião, em segundos. Vem do plano
+    // (`max_meeting_minutes` em plan_features, exposto por my_usage()); o padrão
+    // de 2h10 cobre a janela até a resposta chegar e o caso de a consulta
+    // falhar — sem ele, uma falha de rede removeria o teto.
+    //
+    // Aplicado aqui, no cliente, e não na edge function: o Deepgram só verifica
+    // o token no handshake, então o servidor não corta uma conexão já aberta.
+    private var maxMeetingSeconds: Int = DEFAULT_MAX_MEETING_SECONDS
 
     private var projectionResultCode: Int = Activity.RESULT_CANCELED
     private var projectionData: Intent? = null
@@ -452,10 +465,38 @@ class RecordingService : Service() {
     // ── Timer ─────────────────────────────────────────────────────────────────
 
     private fun startTimer() {
+        loadMeetingDurationLimit()
         timerJob = serviceScope.launch {
             while (RecordingState.state.value.isRecording) {
                 kotlinx.coroutines.delay(1000)
                 RecordingState.update { it.copy(elapsedSeconds = it.elapsedSeconds + 1) }
+
+                // Encerra pelo mesmo caminho do botão parar: salva e processa,
+                // então nada do que foi falado se perde.
+                if (RecordingState.state.value.elapsedSeconds >= maxMeetingSeconds) {
+                    Log.i(TAG, "Limite de duracao atingido (${maxMeetingSeconds}s); encerrando")
+                    stopRecording()
+                    break
+                }
+            }
+        }
+    }
+
+    /** Lê `max_meeting_minutes` do plano. Falha mantém o padrão. */
+    private fun loadMeetingDurationLimit() {
+        serviceScope.launch {
+            runCatching {
+                val raw = SupabaseClientProvider.client.postgrest
+                    .rpc("my_usage")
+                    .data
+                val minutes = LenientJson
+                    .decodeFromString<PlanUsageResponse>(raw)
+                    .maxMeetingMinutes
+                if (minutes != null && minutes > 0) {
+                    maxMeetingSeconds = minutes * 60
+                }
+            }.onFailure {
+                Log.w(TAG, "Nao foi possivel ler o limite de duracao do plano: ${it.message}")
             }
         }
     }

@@ -59,3 +59,12 @@ data class EnhanceTranscriptResponse(
     val enhancement: Enhancement? = null,
     val error: String? = null,
 )
+
+/**
+ * Resposta da RPC `my_usage()`. Só o campo usado aqui é declarado; LenientJson
+ * ignora o resto (plano, consumo do mês, limites mensais).
+ */
+@Serializable
+data class PlanUsageResponse(
+    @SerialName("max_meeting_minutes") val maxMeetingMinutes: Int? = null,
+)
