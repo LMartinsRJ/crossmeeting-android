@@ -60,8 +60,8 @@ class RecordingService : Service() {
          * transcrita, não nível de áudio: ventilador, ar-condicionado ou
          * digitação manteriam a sessão viva para sempre se o critério fosse som.
          */
-        private const val SILENCE_WARN_MS = 13 * 60 * 1000L
-        private const val SILENCE_END_MS  = 15 * 60 * 1000L
+        private const val SILENCE_WARN_MS = 18 * 60 * 1000L
+        private const val SILENCE_END_MS  = 20 * 60 * 1000L
 
         /** Antecedência do aviso de duração, em segundos. */
         private const val DURATION_WARN_LEAD_SECONDS = 5 * 60
