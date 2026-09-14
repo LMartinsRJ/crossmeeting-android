@@ -13,6 +13,12 @@ import kotlinx.serialization.json.Json
  */
 val LenientJson = Json { ignoreUnknownKeys = true }
 
+/** Corpo da chamada a `deepgram-token`. Pede o token temporario de 60 s. */
+@Serializable
+data class DeepgramTokenRequest(
+    val grant: Boolean = true,
+)
+
 @Serializable
 data class DeepgramTokenResponse(
     val token: String? = null,

@@ -277,8 +277,8 @@ class RecordingService : Service() {
             // Pede o token temporário (60 s). Se o servidor não conseguir criar,
             // devolve a chave mestra com token_type "api_key" e o esquema muda
             // sozinho abaixo — a gravação nunca fica refém disso.
-            setBody(mapOf("grant" to true))
             contentType(ContentType.Application.Json)
+            setBody(DeepgramTokenRequest(grant = true))
         }
         val tokenBody = LenientJson.decodeFromString<DeepgramTokenResponse>(tokenResponse.bodyAsText())
         val token = tokenBody.token ?: error(tokenBody.error ?: "Token do Deepgram não recebido")
