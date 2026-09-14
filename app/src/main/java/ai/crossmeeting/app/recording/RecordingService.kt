@@ -83,7 +83,7 @@ class RecordingService : Service() {
         const val EXTRA_PROJECTION_DATA        = "projection_data"
 
         private const val NOTIFICATION_ID = 1001
-        private const val CHANNEL_ID      = "recording_v2"
+        private const val CHANNEL_ID      = "recording_v3"
         private const val SAMPLE_RATE     = 16000
         private const val BUFFER_SIZE     = 4096
         private const val TAG             = "CMRecording"
@@ -300,6 +300,7 @@ class RecordingService : Service() {
             url.parameters.append("encoding", "linear16")
             url.parameters.append("sample_rate", SAMPLE_RATE.toString())
             url.parameters.append("channels", "1")
+            url.parameters.append("diarize", "true")
             url.parameters.append("mip_opt_out", mipOptOut.toString())
             // O esquema acompanha o tipo do token: "Bearer" para o temporário
             // do /auth/grant, "Token" para a chave mestra. Trocar os dois
@@ -512,15 +513,52 @@ class RecordingService : Service() {
         runCatching { LenientJson.decodeFromString<DeepgramMessage>(text) }
             .onFailure { if (BuildConfig.DEBUG) Log.e(TAG, "decode Deepgram: $text", it) else Log.e(TAG, "decode Deepgram failed", it) }
             .onSuccess { msg ->
-                val transcript = msg.channel?.alternatives?.firstOrNull()?.transcript.orEmpty()
-                if (transcript.isBlank()) return
+                val alt = msg.channel?.alternatives?.firstOrNull() ?: return
+                if (alt.transcript.isBlank()) return
                 // Interim também conta: significa que há fala sendo captada agora.
                 RecordingState.markSpeech()
+
+                if (!msg.isFinal) {
+                    // O interim é um palpite que ainda vai mudar; não vale
+                    // rotular por interlocutor, só mostrar o texto corrente.
+                    RecordingState.update { it.copy(interimText = alt.transcript) }
+                    return
+                }
+
+                val linhas = agruparPorInterlocutor(alt)
                 RecordingState.update { cur ->
-                    if (msg.isFinal) cur.copy(finalTranscript = (cur.finalTranscript + " " + transcript).trim(), interimText = "")
-                    else cur.copy(interimText = transcript)
+                    val novo = if (cur.finalTranscript.isBlank()) linhas
+                               else cur.finalTranscript + "\n" + linhas
+                    cur.copy(finalTranscript = novo, interimText = "")
                 }
             }
+    }
+
+    /**
+     * Agrupa as palavras por quem falou, no mesmo formato que o desktop grava:
+     * uma linha por trecho, prefixada com `[Speaker N]`. O resto do sistema
+     * (enhance, chat, resumo) já espera esse formato — divergir aqui faria a
+     * mesma reunião ser interpretada de dois jeitos conforme o aparelho.
+     *
+     * Sem diarização disponível (palavras vazias ou sem speaker), devolve o
+     * texto puro, que é como o Android funcionava antes.
+     */
+    private fun agruparPorInterlocutor(alt: DeepgramAlternative): String {
+        val words = alt.words
+        if (words.isEmpty() || words.all { it.speaker == null }) return alt.transcript
+
+        val segmentos = mutableListOf<Pair<Int, MutableList<String>>>()
+        for (w in words) {
+            val spk = w.speaker ?: 0
+            val ultimo = segmentos.lastOrNull()
+            if (ultimo != null && ultimo.first == spk) ultimo.second.add(w.word)
+            else segmentos.add(spk to mutableListOf(w.word))
+        }
+
+        return segmentos
+            .map { (spk, ws) -> "[Speaker ${spk + 1}] " + ws.joinToString(" ") }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
     }
 
     // ── Timer ─────────────────────────────────────────────────────────────────
@@ -659,23 +697,33 @@ class RecordingService : Service() {
 
     private fun startForegroundNotification(hasPlayback: Boolean) {
         val manager = getSystemService(NotificationManager::class.java)
+        // As configuracoes de um canal sao IMUTAVEIS depois de criado: mudar o
+        // codigo nao altera um canal que ja existe no aparelho. Por isso o id
+        // sobe de versao quando essas configuracoes mudam — senao a correcao
+        // nunca chega em quem ja tinha o app instalado.
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Gravação", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Mostra quando o Crossmeeting está gravando uma reunião"
                     setShowBadge(true)
-                    lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
+                    // PUBLIC, nao PRIVATE: a notificacao nao carrega nada do
+                    // conteudo da reuniao, so o fato de estar gravando — e e
+                    // justamente isso que o usuario precisa ver com a tela
+                    // bloqueada. Com PRIVATE o sistema trocava pela versao
+                    // publica, discreta demais para dar essa garantia.
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 },
             )
         }
         val openIntent = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        val publicVersion: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Crossmeeting")
-            .setContentText("Gravação em andamento")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .build()
+        // Parar sem desbloquear o aparelho.
+        val stopIntent = PendingIntent.getService(
+            this, 1,
+            Intent(this, RecordingService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE,
+        )
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("🎙 Crossmeeting gravando")
@@ -690,8 +738,8 @@ class RecordingService : Service() {
             .setChronometerCountDown(false)
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(publicVersion)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .addAction(android.R.drawable.ic_media_pause, "Parar", stopIntent)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 

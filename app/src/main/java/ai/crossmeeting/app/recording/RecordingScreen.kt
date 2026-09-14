@@ -297,9 +297,29 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    if (state.finalTranscript.isNotBlank()) {
+                    // O finalTranscript guarda uma linha por trecho, prefixada
+                    // com [Speaker N] — mesmo formato do desktop. Aqui o rotulo
+                    // vira cabecalho e so aparece quando o interlocutor muda.
+                    var ultimoSpeaker: String? = null
+                    for (linha in state.finalTranscript.split("\n")) {
+                        if (linha.isBlank()) continue
+                        val m = SPEAKER_PREFIX.find(linha)
+                        val speaker = m?.groupValues?.getOrNull(1)
+                        val texto = if (m != null) linha.removeRange(m.range) else linha
+
+                        if (speaker != null && speaker != ultimoSpeaker) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                "Speaker $speaker",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                        ultimoSpeaker = speaker
+
                         Text(
-                            state.finalTranscript,
+                            texto.trim(),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -380,3 +400,6 @@ private fun VoiceWaveform(amplitude: Float, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/** Casa o prefixo "[Speaker N] " que o RecordingService grava em cada trecho. */
+private val SPEAKER_PREFIX = Regex("""^\[Speaker (\d+)\]\s*""")

@@ -34,8 +34,18 @@ data class DeepgramTokenResponse(
     val error: String? = null,
 )
 
+/** Uma palavra com o interlocutor que a disse. `speaker` só vem com diarize=true. */
 @Serializable
-data class DeepgramAlternative(val transcript: String = "")
+data class DeepgramWord(
+    val word: String = "",
+    val speaker: Int? = null,
+)
+
+@Serializable
+data class DeepgramAlternative(
+    val transcript: String = "",
+    val words: List<DeepgramWord> = emptyList(),
+)
 
 @Serializable
 data class DeepgramChannel(val alternatives: List<DeepgramAlternative> = emptyList())
