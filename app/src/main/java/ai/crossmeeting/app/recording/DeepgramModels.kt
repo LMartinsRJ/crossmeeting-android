@@ -17,6 +17,14 @@ val LenientJson = Json { ignoreUnknownKeys = true }
 data class DeepgramTokenResponse(
     val token: String? = null,
     @SerialName("expires_in") val expiresIn: Int? = null,
+    /** "temporary" (usa Bearer) ou "api_key" (usa Token). Ausente = api_key. */
+    @SerialName("token_type") val tokenType: String? = null,
+    /**
+     * Decidido pelo plano, no servidor. `true` = fora do programa de melhoria
+     * do Deepgram (privacidade); `false` = participa (tarifa com desconto).
+     * Ausente = privacidade, que é o lado seguro do erro.
+     */
+    @SerialName("mip_opt_out") val mipOptOut: Boolean? = null,
     val error: String? = null,
 )
 

@@ -35,6 +35,9 @@ import java.util.concurrent.TimeUnit
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.header
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.URLProtocol
@@ -54,6 +57,14 @@ class RecordingService : Service() {
     companion object {
         /** 2h10 — mesmo teto do desktop. */
         private const val DEFAULT_MAX_MEETING_SECONDS = 130 * 60
+
+        /**
+         * Sem áudio, o Deepgram fecha a conexão por inatividade em cerca de
+         * 10 s. Como o silêncio deixou de ser enviado, o socket precisa ser
+         * segurado com KeepAlive — que não é faturado.
+         */
+        private const val KEEPALIVE_AFTER_MS = 5_000L
+        private const val KEEPALIVE_TICK_MS = 3_000L
 
         /**
          * Encerramento por silêncio, igual ao desktop. O gatilho é palavra
@@ -123,6 +134,18 @@ class RecordingService : Service() {
     // Aplicado aqui, no cliente, e não na edge function: o Deepgram só verifica
     // o token no handshake, então o servidor não corta uma conexão já aberta.
     private var maxMeetingSeconds: Int = DEFAULT_MAX_MEETING_SECONDS
+
+    /** Detecta fala para não transmitir (nem pagar) silêncio. */
+    private var vad: VoiceActivityDetector? = null
+    private var lastAudioSentAt = 0L
+    private var keepAliveJob: Job? = null
+
+    /**
+     * Decidido pelo plano, no servidor. O cliente só obedece — se fosse escolha
+     * do app, bastaria editá-lo para pagar de básico e ter o tratamento de
+     * privacidade do plano de cima.
+     */
+    private var mipOptOut = true
 
     private var projectionResultCode: Int = Activity.RESULT_CANCELED
     private var projectionData: Intent? = null
@@ -250,9 +273,17 @@ class RecordingService : Service() {
     ): io.ktor.client.plugins.websocket.DefaultClientWebSocketSession? = try {
         // Token novo a cada tentativa: hoje é uma API key longa, mas quando
         // migrarmos para token temporário (B8/Fase 4) isto já estará certo.
-        val tokenResponse = SupabaseClientProvider.client.functions.invoke("deepgram-token")
+        val tokenResponse = SupabaseClientProvider.client.functions.invoke("deepgram-token") {
+            // Pede o token temporário (60 s). Se o servidor não conseguir criar,
+            // devolve a chave mestra com token_type "api_key" e o esquema muda
+            // sozinho abaixo — a gravação nunca fica refém disso.
+            setBody(mapOf("grant" to true))
+            contentType(ContentType.Application.Json)
+        }
         val tokenBody = LenientJson.decodeFromString<DeepgramTokenResponse>(tokenResponse.bodyAsText())
         val token = tokenBody.token ?: error(tokenBody.error ?: "Token do Deepgram não recebido")
+        val authScheme = if (tokenBody.tokenType == "temporary") "Bearer" else "Token"
+        mipOptOut = tokenBody.mipOptOut ?: true
 
         client.webSocketSession(
             method = HttpMethod.Get,
@@ -269,10 +300,11 @@ class RecordingService : Service() {
             url.parameters.append("encoding", "linear16")
             url.parameters.append("sample_rate", SAMPLE_RATE.toString())
             url.parameters.append("channels", "1")
-            // "Token", não "Bearer": a deepgram-token devolve uma API key,
-            // e o Deepgram só aceita Bearer para tokens temporários do
-            // endpoint /auth/grant. Com Bearer o handshake volta 401.
-            header("Authorization", "Token $token")
+            url.parameters.append("mip_opt_out", mipOptOut.toString())
+            // O esquema acompanha o tipo do token: "Bearer" para o temporário
+            // do /auth/grant, "Token" para a chave mestra. Trocar os dois
+            // devolve 401 no handshake.
+            header("Authorization", "$authScheme $token")
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
@@ -309,6 +341,22 @@ class RecordingService : Service() {
      * É o ponto único que desacopla a captura do transporte.
      */
     private suspend fun sendAudio(bytes: ByteArray) {
+        // Silêncio não é transmitido: o Deepgram cobra por minuto de áudio que
+        // chega nele, não por minuto de fala. O KeepAlive segura o socket.
+        val detector = vad
+        if (detector != null) {
+            val frames = detector.process(bytes)
+            if (frames.isEmpty()) return
+            // O pré-roll pode devolver mais de um bloco no começo da fala.
+            for (frame in frames) sendFrame(frame)
+            return
+        }
+        sendFrame(bytes)
+    }
+
+    /** Envia um bloco pela conexão atual; se estiver fora do ar, bufferiza. */
+    private suspend fun sendFrame(bytes: ByteArray) {
+        lastAudioSentAt = System.currentTimeMillis()
         val session = wsSession
         if (session != null && socketConnected) {
             try {
@@ -479,6 +527,9 @@ class RecordingService : Service() {
 
     private fun startTimer() {
         loadMeetingDurationLimit()
+        vad = VoiceActivityDetector(sampleRate = SAMPLE_RATE, frameSamples = BUFFER_SIZE / 2)
+        lastAudioSentAt = System.currentTimeMillis()
+        startKeepAlive()
         timerJob = serviceScope.launch {
             while (RecordingState.state.value.isRecording) {
                 kotlinx.coroutines.delay(1000)
@@ -533,6 +584,20 @@ class RecordingService : Service() {
         }
     }
 
+    /** Segura o socket aberto durante o silêncio, sem enviar áudio. */
+    private fun startKeepAlive() {
+        if (keepAliveJob != null) return
+        keepAliveJob = serviceScope.launch {
+            while (RecordingState.state.value.isRecording) {
+                kotlinx.coroutines.delay(KEEPALIVE_TICK_MS)
+                val session = wsSession ?: continue
+                if (!socketConnected) continue
+                if (System.currentTimeMillis() - lastAudioSentAt < KEEPALIVE_AFTER_MS) continue
+                runCatching { session.send(Frame.Text("""{"type":"KeepAlive"}""")) }
+            }
+        }
+    }
+
     // ── Stop ──────────────────────────────────────────────────────────────────
 
     private fun stopRecording() {
@@ -540,6 +605,13 @@ class RecordingService : Service() {
         // parar de reconectar e os loops de captura encerrarem.
         RecordingState.update { it.copy(isRecording = false, reconnecting = false) }
         reconnectAttempt = 0
+
+        keepAliveJob?.cancel(); keepAliveJob = null
+        vad?.let {
+            Log.i(TAG, "VAD: ${it.sentFrames()} blocos enviados, ${it.skippedFrames()} descartados " +
+                "(${"%.1f".format(it.skippedRatio() * 100)}% de silencio nao faturado)")
+        }
+        vad = null
 
         micJob?.cancel(); pbJob?.cancel()
         micRecord?.let { runCatching { it.stop() }; it.release() }; micRecord = null
