@@ -3,6 +3,8 @@ package ai.crossmeeting.app.recording
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -265,21 +267,61 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
                 },
             )
 
-            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    val amplitude by AudioLevelState.amplitude.collectAsState()
-                    VoiceWaveform(
-                        amplitude = amplitude,
-                        modifier = Modifier.fillMaxWidth().height(64.dp),
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
+            // Transcricao ao vivo. Ela sempre existiu no estado — o
+            // handleDeepgramMessage atualiza finalTranscript e interimText a cada
+            // frase — mas a tela so desenhava a onda de audio e "Gravando...", e
+            // o usuario so via o texto depois do processamento do Claude.
+            val scroll = rememberScrollState()
+            LaunchedEffect(state.finalTranscript, state.interimText) {
+                scroll.animateScrollTo(scroll.maxValue)
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(scroll)
+                    .padding(top = 8.dp),
+            ) {
+                if (state.finalTranscript.isBlank() && state.interimText.isBlank()) {
+                    Spacer(modifier = Modifier.height(24.dp))
                     Text(
-                        "Gravando...",
+                        "Aguardando transcricao...",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Fale algo para comecar",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    if (state.finalTranscript.isNotBlank()) {
+                        Text(
+                            state.finalTranscript,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                    // O interim e o palpite do Deepgram, ainda sujeito a mudar:
+                    // fica mais apagado para nao parecer texto definitivo.
+                    if (state.interimText.isNotBlank()) {
+                        Text(
+                            state.interimText,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
+                Spacer(modifier = Modifier.height(16.dp))
             }
+
+            val amplitude by AudioLevelState.amplitude.collectAsState()
+            VoiceWaveform(
+                amplitude = amplitude,
+                modifier = Modifier.fillMaxWidth().height(48.dp).padding(bottom = 8.dp),
+            )
         }
     }
 }
