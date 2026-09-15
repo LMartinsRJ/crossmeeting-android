@@ -86,6 +86,11 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
                 // se o usuário parar no meio de uma frase, o que sobrou fica só em interimText.
                 val transcript = (snapshot.finalTranscript + " " + snapshot.interimText).trim()
                 val wordCount = transcript.split(Regex("\\s+")).count { it.isNotBlank() }
+                // Gravacao acidental: descarta em vez de encher o historico de
+                // reunioes vazias e gastar uma chamada do Claude num texto sem
+                // conteudo. Mesmo criterio do desktop (SummaryScreen).
+                // -1 sinaliza descarte para o onSuccess la embaixo.
+                if (wordCount < MIN_WORDS_TO_SAVE) return@runCatching -1L
                 val userId = SupabaseClientProvider.client.postgrest.from("profiles")
                     .select().decodeSingle<ProfileRow>().id
                 val fallbackTitle = title.trim().ifBlank {
@@ -135,7 +140,7 @@ fun RecordingScreen(onSaved: (Long) -> Unit, onDiscarded: () -> Unit) {
             saving = false
             result.onSuccess { meetingId ->
                 RecordingState.reset()
-                onSaved(meetingId)
+                if (meetingId < 0) onDiscarded() else onSaved(meetingId)
             }.onFailure { saveError = it.message }
         }
     }
@@ -403,3 +408,11 @@ private fun VoiceWaveform(amplitude: Float, modifier: Modifier = Modifier) {
 
 /** Casa o prefixo "[Speaker N] " que o RecordingService grava em cada trecho. */
 private val SPEAKER_PREFIX = Regex("""^\[Speaker (\d+)\]\s*""")
+
+/**
+ * Abaixo disso a gravacao e tratada como acidental e descartada: nao vira
+ * reuniao no historico nem gasta uma chamada do Claude. Mesmo numero do
+ * desktop — os dois precisam concordar, senao a mesma gravacao curta vira
+ * reuniao num aparelho e desaparece no outro.
+ */
+private const val MIN_WORDS_TO_SAVE = 20

@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.util.Log
 import ai.crossmeeting.app.BuildConfig
 import ai.crossmeeting.app.MainActivity
+import ai.crossmeeting.app.R
 import ai.crossmeeting.app.SupabaseClientProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -731,7 +732,9 @@ class RecordingService : Service() {
                 if (hasPlayback) "Capturando microfone + áudio da reunião"
                 else "Transcrevendo sua reunião ao vivo"
             )
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_notification)
+            // Pinta o icone e o nome do app com o azul da marca.
+            .setColor(0xFF6C8EFF.toInt())
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setUsesChronometer(true)

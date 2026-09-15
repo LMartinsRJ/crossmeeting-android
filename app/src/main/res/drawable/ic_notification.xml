@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ícone de notificação: as mesmas barras do logo, em silhueta.
+
+  Ícone de status bar TEM que ser monocromático com fundo transparente — o
+  Android descarta a cor e pinta tudo com o tint do sistema. Usar o logo
+  colorido aqui resultaria num quadrado branco sólido, que é o erro clássico.
+
+  Proporções redesenhadas para 24dp em vez de escaladas do logo de 108dp: numa
+  barra de status o ícone aparece com poucos pixels, e as barras finas do
+  original sumiriam.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M5,13 L5,19.5" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M8.5,9.5 L8.5,19.5" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M12,5 L12,19.5" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M15.5,10.5 L15.5,19.5" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M19,14.5 L19,19.5" />
+</vector>
