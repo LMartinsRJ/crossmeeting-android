@@ -1,7 +1,12 @@
 package ai.crossmeeting.app
 
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -37,11 +42,32 @@ import kotlinx.serialization.json.put
 enum class AppTab { HOME, MEETINGS, ACTIONS, BRIEFING }
 
 class MainActivity : ComponentActivity() {
+    /**
+     * Android 13+ exige permissao explicita para exibir notificacoes. Sem ela a
+     * notificacao do servico de gravacao nao aparece em lugar nenhum e o
+     * usuario nao tem como saber, com o celular bloqueado, que a reuniao ainda
+     * esta sendo gravada.
+     *
+     * Pedida na abertura e nao no inicio da gravacao de proposito: negar aqui
+     * nao pode impedir ninguem de gravar — so custa a notificacao.
+     */
+    private fun pedirPermissaoDeNotificacao() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val concedida = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (concedida) return
+        ActivityCompat.requestPermissions(
+            this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001,
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Aplica o locale salvo antes de inflar qualquer view
         LangPrefs.set(this, LangPrefs.get(this))
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        pedirPermissaoDeNotificacao()
         val launchUri = intent.data
         if (launchUri?.scheme == "crossmeeting" && launchUri.host == "login-callback") {
             SupabaseClientProvider.client.handleDeeplinks(intent)
